@@ -2,8 +2,8 @@
 #
 # It runs the CodeRifts contract gate on every pull request. The gate posts a Check Run named
 # EXACTLY:  CodeRifts / contract-gate
-# Make THAT string a required status check on your protected branch (see ENFORCEMENT.md) to turn
-# this from advisory into merge-blocking.
+# And the App check: CodeRifts / issuer
+# Make BOTH strings required status checks (see ENFORCEMENT.md). One of them alone is not the gate.
 name: CodeRifts Contract Gate
 
 # Run on EVERY pull request to the protected branch. Do NOT add `paths:` filters — a path filter

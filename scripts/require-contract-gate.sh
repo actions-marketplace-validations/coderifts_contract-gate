@@ -21,12 +21,13 @@ OWNER="${1:?owner required}"
 REPO="${2:?repo required}"
 BRANCH="${3:-main}"
 CONTEXT="CodeRifts / contract-gate"   # MUST match src/check-run.js CHECK_NAME exactly.
+ISSUER_CONTEXT="CodeRifts / issuer"    # The App check. Both contexts are required.
 
 API="repos/${OWNER}/${REPO}/branches/${BRANCH}/protection"
 
 # Read existing contexts (empty if no protection yet), then union our context in.
 existing="$(gh api "${API}/required_status_checks/contexts" 2>/dev/null || echo '[]')"
-contexts="$(printf '%s' "$existing" | jq --arg c "$CONTEXT" '. + [$c] | unique')"
+contexts="$(printf '%s' "$existing" | jq --arg c "$CONTEXT" --arg i "$ISSUER_CONTEXT" '. + [$c, $i] | unique')"
 
 # PUT the full protection object. required_pull_request_reviews/restrictions are left null (unchanged
 # defaults); tune to your policy. The three enforcement-critical fields are set explicitly.

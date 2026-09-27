@@ -55,7 +55,7 @@ branch):
 2. Check **Require status checks to pass before merging**.
 3. Check **Require branches to be up to date before merging** (this is `strict` — see "fail-closed
    on absence" below).
-4. In the search box, add: **`CodeRifts / contract-gate`**.
+4. In the search box, add both required contexts: **`CodeRifts / contract-gate`** (the reader, this Action) and **`CodeRifts / issuer`** (the App check). One of them alone is not the gate.
 5. Check **Do not allow bypassing the above settings** / **Include administrators** (see SECURITY.md).
 6. **Create / Save changes**.
 
@@ -77,7 +77,7 @@ gh api -X PUT repos/{owner}/{repo}/branches/main/protection \
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["CodeRifts / contract-gate"]
+    "contexts": ["CodeRifts / contract-gate", "CodeRifts / issuer"]
   },
   "enforce_admins": true,
   "required_pull_request_reviews": null,
@@ -90,7 +90,7 @@ Verify it took:
 
 ```bash
 gh api repos/{owner}/{repo}/branches/main/protection/required_status_checks --jq '.contexts'
-# => ["CodeRifts / contract-gate"]
+# => ["CodeRifts / contract-gate", "CodeRifts / issuer"]
 ```
 
 ## Fail-closed on absence — the workflow MUST run on every PR
@@ -124,7 +124,7 @@ concluded `skipped`. A required context in that state is green.
 **When this reaches you.** It does not, as long as the required context is the check-run this
 ACTION posts — the action either posts a conclusion or posts nothing, and nothing is blocked by
 absence. It reaches you the moment you set `post-check-run: 'false'` and require the JOB's own
-check instead, which is what the "Two integrations, one name" advice leads to. A job can be
+check instead, which is what requiring the job name instead of the posted check leads to. A job can be
 skipped; a job's check-run can therefore conclude `skipped`; and that is a pass.
 
 **The fix is an aggregator, and `always()` is the load-bearing word** — without it the aggregator

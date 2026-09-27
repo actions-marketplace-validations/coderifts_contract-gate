@@ -440,4 +440,49 @@ function buildSummary({ pass, reason, decision, executionAction, receiptStatus, 
   return lines.join('\n');
 }
 
-module.exports = { evaluateGate, PASSING_ACTIONS, buildSummary, remedyBlock, nextStepBlock, readNextAgentStep, buildCitation, citationBlock };
+const DOES_NOT_PROVE_URL = 'https://coderifts.com/docs/proof-boundaries/';
+
+function shortTarget(id) {
+  if (id == null || id === '') return 'n/a';
+  const s = String(id);
+  if (s.length <= 22) return s;
+  return `${s.slice(0, 14)}…${s.slice(-6)}`;
+}
+
+/**
+ * The five lines a check summary and a PR comment carry. VERIFIED_CURRENT is line 2,
+ * not the title. A STOP or REQUEST_APPROVAL adds one remedy line under them.
+ */
+function buildReceiptCheckLines({
+  executionAction = null,
+  operation = null,
+  targetId = null,
+  expiresAt = null,
+  verifyStatus = null,
+  currentlyAuthorized = null,
+  reason = null,
+  receiptDigest: digest = null,
+  place = null,
+  headSha = null,
+  token = null,
+  remedy = null,
+} = {}) {
+  const line1 = `${executionAction || 'n/a'} · ${operation || 'n/a'} · ${shortTarget(targetId)} · ${expiresAt || 'n/a'}`;
+  const line2 = verifyStatus === 'VERIFIED_CURRENT'
+    ? `VERIFIED_CURRENT · currently_authorized: ${currentlyAuthorized === true}`
+    : String(reason || verifyStatus || 'n/a');
+  const line3 = `${digest || 'n/a'} · ${place || 'n/a'}`;
+  const issued = place === 'issued in this run — not in the commit';
+  const line4 = issued
+    ? `npx @coderifts/receipt-verifier ${token || ''}`.trim()
+    : `npx @coderifts/receipt-verifier --from-commit ${headSha || 'n/a'}`;
+  const line5 = `the approver is not in the signature · ${DOES_NOT_PROVE_URL}`;
+  const lines = [line1, line2, line3, line4, line5];
+  if (remedy) lines.push(String(remedy));
+  return lines.join('\n');
+}
+
+module.exports = {
+  evaluateGate, PASSING_ACTIONS, buildSummary, remedyBlock, nextStepBlock, readNextAgentStep,
+  buildCitation, citationBlock, buildReceiptCheckLines, DOES_NOT_PROVE_URL,
+};

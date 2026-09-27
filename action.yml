@@ -41,6 +41,17 @@ inputs:
     description: 'cr.monitor.attest.v1 token string (guard 9.2.0+ outcome.monitoring_attestation). Required when require-verified-monitoring is true and the decision is CWM. No network fetch.'
     required: false
     default: ''
+  profile:
+    description: >-
+      enforcing (default): trailer-first reader. A head commit that already carries a
+      CodeRifts-Receipt trailer and a .coderifts/receipts/<sha>.json sidecar is verified
+      offline against the pinned keyring and the run does not call preflight. A human PR
+      with no trailer is issued a receipt (preflight authorize) and that receipt is verified
+      offline the same way before a green check is posted. The receipt is written to the
+      check summary and is never committed back. require-verified-monitoring is on in this
+      profile. Any other value keeps the historical preflight path.
+    required: false
+    default: 'enforcing'
   require-receipt-trailer:
     description: >-
       When true, the head commit must carry its own receipt — a `CodeRifts-Receipt:` commit trailer

@@ -23,6 +23,7 @@
 const crypto = require('node:crypto');
 const { receiptForCommit } = require('./receipt-from-commit');
 const { verifyReceipt } = require('./verify');
+const { verifyMonitoringAttestation, receiptDigest } = require('./monitoring-attestation');
 
 const US = '\x1f';
 const ALLOW_ACTIONS = Object.freeze(['CONTINUE']);
@@ -47,6 +48,97 @@ function artifactDigestOf(artifacts) {
 }
 
 /**
+ * Judge a receipt the gate already holds. The pass is the offline verify plus the binding,
+ * never a decision string that arrived next to the token.
+ *
+ * `profile: 'enforcing'` is the reader. It names the closed reasons the reader posts
+ * (INVALID_SIGNATURE, VERIFIED_EXPIRED, target_mismatch, operation_mismatch) and it allows
+ * CONTINUE_WITH_MONITORING only when the monitoring attestation verifies. The legacy caller
+ * keeps the 2026-09-26 reason strings.
+ */
+function judgeReceipt({
+  token, envelope, carrier = null, keyring, artifacts, now,
+  profile = null,
+  requireVerifiedMonitoring = false,
+  monitoringAttestation = null,
+  monitoringKeyring = null,
+}) {
+  const enforcing = profile === 'enforcing';
+  if (!envelope || typeof envelope !== 'object') {
+    return {
+      ok: false,
+      reason: 'receipt_envelope_required',
+      carrier,
+      token: token || null,
+      detail: 'the attached receipt carries no envelope, so the diff it covers cannot be checked; '
+        + 'attach .coderifts/receipts/<sha>.json with { receipt, envelope }',
+    };
+  }
+  const res = verifyReceipt(token, { ctx: { keyring, expectedKid: null }, envelope, now });
+  if (!res || res.valid !== true) {
+    const status = res && res.status;
+    if (enforcing && (status === 'INVALID_SIGNATURE' || status === 'VERIFIED_EXPIRED')) {
+      return { ok: false, reason: status, carrier, status, token, envelope, payload: res && res.payload };
+    }
+    return { ok: false, reason: 'receipt_trailer_invalid', carrier, status, token, envelope, payload: res && res.payload };
+  }
+  const want = artifactDigestOf(artifacts);
+  const hasTarget = typeof envelope.target_id === 'string' && envelope.target_id.length > 0;
+  const signedTarget = hasTarget ? envelope.target_id : envelope.artifact_digest;
+  const targetAgrees = !hasTarget || !envelope.artifact_digest || envelope.artifact_digest === envelope.target_id;
+  if (!targetAgrees || signedTarget !== want) {
+    return {
+      ok: false,
+      reason: enforcing ? 'target_mismatch' : 'receipt_diff_mismatch',
+      carrier,
+      token,
+      envelope,
+      payload: res.payload,
+      detail: `receipt covers ${signedTarget || '(none)'}, this diff is ${want}`,
+    };
+  }
+  if (enforcing && envelope.operation !== 'merge') {
+    return {
+      ok: false, reason: 'operation_mismatch', carrier, status: envelope.operation || null,
+      token, envelope, payload: res.payload,
+    };
+  }
+  const action = envelope.execution_action;
+  if (enforcing && action === 'CONTINUE_WITH_MONITORING') {
+    if (requireVerifiedMonitoring !== true || !monitoringKeyring) {
+      return {
+        ok: false, reason: 'monitoring_keyring_missing', carrier, status: action,
+        token, envelope, payload: res.payload,
+      };
+    }
+    const mon = verifyMonitoringAttestation(String(monitoringAttestation || ''), {
+      registry: monitoringKeyring,
+      intended: {
+        decision_id: typeof envelope.decision_id === 'string' ? envelope.decision_id : '',
+        receipt_digest: receiptDigest(token),
+      },
+      now,
+    });
+    const monOk = mon && (mon.status === 'MON_ATTEST_VALID' || mon.status === 'MON_ATTEST_RETIRED_KEY_VALID_AT_ISSUE');
+    if (!monOk || !mon.payload || mon.payload.delivery_status !== 'delivered_acked') {
+      return {
+        ok: false, reason: 'monitoring_not_verified', carrier, status: mon && mon.status,
+        token, envelope, payload: res.payload,
+      };
+    }
+  } else if (!ALLOW_ACTIONS.includes(action)) {
+    return {
+      ok: false, reason: 'receipt_not_allow', carrier, status: action || null,
+      token, envelope, payload: res.payload,
+    };
+  }
+  return {
+    ok: true, reason: 'receipt_trailer_verified', carrier, status: res.status,
+    token, envelope, payload: res.payload,
+  };
+}
+
+/**
  * @param {object} o
  * @param {string} o.headSha
  * @param {string} o.cwd            repository checkout
@@ -54,7 +146,10 @@ function artifactDigestOf(artifacts) {
  * @param {Array}  o.artifacts      deriveArtifactsFromDiff(...).artifacts
  * @returns {{ ok: boolean, reason: string, carrier?: string, status?: string, detail?: string }}
  */
-function checkReceiptTrailer({ headSha, cwd, keyring, artifacts, now, findImpl = receiptForCommit }) {
+function checkReceiptTrailer({
+  headSha, cwd, keyring, artifacts, now, findImpl = receiptForCommit,
+  profile = null, requireVerifiedMonitoring = false, monitoringAttestation = null, monitoringKeyring = null,
+}) {
   let found;
   try {
     found = findImpl(headSha, { cwd });
@@ -65,32 +160,10 @@ function checkReceiptTrailer({ headSha, cwd, keyring, artifacts, now, findImpl =
         : 'receipt_trailer_missing';
     return { ok: false, reason, detail: msg.slice(0, 300) };
   }
-  if (!found.envelope || typeof found.envelope !== 'object') {
-    return {
-      ok: false,
-      reason: 'receipt_envelope_required',
-      carrier: found.carrier,
-      detail: 'the attached receipt carries no envelope, so the diff it covers cannot be checked; '
-        + 'attach .coderifts/receipts/<sha>.json with { receipt, envelope }',
-    };
-  }
-  const res = verifyReceipt(found.token, { ctx: { keyring, expectedKid: null }, envelope: found.envelope, now });
-  if (!res || res.valid !== true) {
-    return { ok: false, reason: 'receipt_trailer_invalid', carrier: found.carrier, status: res && res.status };
-  }
-  const want = artifactDigestOf(artifacts);
-  if (found.envelope.artifact_digest !== want) {
-    return {
-      ok: false,
-      reason: 'receipt_diff_mismatch',
-      carrier: found.carrier,
-      detail: `receipt covers ${found.envelope.artifact_digest || '(no artifact_digest)'}, this diff is ${want}`,
-    };
-  }
-  if (!ALLOW_ACTIONS.includes(found.envelope.execution_action)) {
-    return { ok: false, reason: 'receipt_not_allow', carrier: found.carrier, status: found.envelope.execution_action || null };
-  }
-  return { ok: true, reason: 'receipt_trailer_verified', carrier: found.carrier };
+  return judgeReceipt({
+    token: found.token, envelope: found.envelope, carrier: found.carrier, keyring, artifacts, now,
+    profile, requireVerifiedMonitoring, monitoringAttestation, monitoringKeyring,
+  });
 }
 
-module.exports = { checkReceiptTrailer, artifactDigestOf };
+module.exports = { checkReceiptTrailer, judgeReceipt, artifactDigestOf };

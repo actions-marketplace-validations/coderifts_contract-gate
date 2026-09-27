@@ -76,22 +76,13 @@ reason (`receipt_trailer_missing`, `receipt_trailer_conflict`, `receipt_trailer_
           require-receipt-trailer: 'true'
 ```
 
-## Two integrations, one name
+## Two required checks
 
-The CodeRifts GitHub App posts a check named `CodeRifts / contract-gate`, and by default so does
-this Action. A repository running both shows two checks under the same name, and a branch-protection
-rule requiring that context cannot distinguish them. Set `check-name` on the Action when both run:
-
-```yaml
-      - uses: coderifts/contract-gate@v0
-        with:
-          api-key: ${{ secrets.CODERIFTS_API_KEY }}
-          check-name: 'contract-gate (Action)'
-```
-
-Whichever name is posted is the one to require in branch protection — see
-[ENFORCEMENT.md](ENFORCEMENT.md). Leave the default when only the Action runs; changing it for no
-reason means the documented required-check context no longer matches what is posted.
+This Action posts `CodeRifts / contract-gate` (the reader). The App posts `CodeRifts / issuer`.
+Branch protection requires both. One of them alone is not the gate. With `profile: enforcing`
+(the default) a valid head-commit receipt is verified offline and the run does not call preflight;
+a pull request with no trailer is issued a receipt, that receipt is verified offline, and it is
+written to the check summary, never back onto the commit. See [ENFORCEMENT.md](ENFORCEMENT.md).
 
 ## Trust model — pinned keyring
 

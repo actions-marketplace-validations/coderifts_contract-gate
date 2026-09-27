@@ -23,7 +23,7 @@ const fs = require('node:fs');
 const { deriveArtifactsFromDiff, defaultGit } = require('./artifacts');
 const { buildGateCompletenessClaim } = require('./completeness-claim');
 const { callPreflight } = require('./preflight');
-const { evaluateGate, buildSummary, remedyBlock, nextStepBlock } = require('./gate');
+const { evaluateGate, buildSummary, remedyBlock, nextStepBlock, buildReceiptCheckLines } = require('./gate');
 const { postCheckRun, CHECK_NAME } = require('./check-run');
 const { loadKeyring } = require('./verify');
 const { verifyExecutionGrant } = require('./execution-grant-verify');
@@ -32,9 +32,41 @@ const { loadMonitoringKeyring } = require('./monitoring-attestation');
 const { selectGrantForHead } = require('./grant-delivery');
 const { OUTCOME_CODE, OUTCOME_CONCLUSION } = require('./outcome-code');
 const { detectExplicitSkip, commitMessagesInRange } = require('./explicit-skip');
-const { checkReceiptTrailer } = require('./receipt-trailer');
+const { checkReceiptTrailer, judgeReceipt } = require('./receipt-trailer');
+const { receiptDigest } = require('./monitoring-attestation');
 
 const PINNED_KEYRING_PATH = path.join(__dirname, '..', 'keyring', 'pinned-keys.json');
+const ISSUED_PLACE = 'issued in this run — not in the commit';
+
+function placeOf(carrier) {
+  if (carrier === 'both') return 'trailer/sidecar';
+  if (carrier === 'trailer' || carrier === 'sidecar') return carrier;
+  return carrier || 'n/a';
+}
+
+function linesForReceipt(judgement, headSha, place) {
+  const env = (judgement && judgement.envelope) || {};
+  const payload = (judgement && judgement.payload) || {};
+  const action = env.execution_action;
+  const verifiedCurrent = judgement && judgement.ok === true && judgement.status === 'VERIFIED_CURRENT';
+  const remedy = action === 'STOP' || action === 'REQUEST_APPROVAL'
+    ? 'remedy: this receipt does not allow the merge; re-preflight authorize for this diff and use that receipt'
+    : null;
+  return buildReceiptCheckLines({
+    executionAction: action,
+    operation: env.operation,
+    targetId: env.target_id || env.artifact_digest,
+    expiresAt: payload.expires_at || env.expires_at || null,
+    verifyStatus: verifiedCurrent ? 'VERIFIED_CURRENT' : null,
+    currentlyAuthorized: verifiedCurrent,
+    reason: judgement && judgement.ok ? judgement.status : (judgement && judgement.reason),
+    receiptDigest: judgement && judgement.token ? receiptDigest(judgement.token) : null,
+    place,
+    headSha,
+    token: judgement && judgement.token,
+    remedy,
+  });
+}
 
 /**
  * X.21 — TWO event shapes, one answer.
@@ -124,6 +156,8 @@ async function runGate({
   postCheckRun: postCheckRun_ = true,
   // T4 — default FALSE: the head-commit receipt is an opt-in requirement.
   requireReceiptTrailer = false,
+  // 1966 — the reader. Unset keeps every existing caller on the preflight path.
+  profile = null,
 }) {
   const emitCheck = async (conclusion, title, summary, text = null) => {
     // 1334 — DELIBERATE opt-out, distinct from "we had no token".
@@ -153,7 +187,11 @@ async function runGate({
   };
 
   try {
-    if (!apiKey) throw new Error('api-key input is required');
+    const enforcing = profile === 'enforcing';
+    // A valid trailer on the enforcing profile never calls the API, so the key is not
+    // required until a missing trailer has to be issued. Every other profile still
+    // refuses to start without one.
+    if (!enforcing && !apiKey) throw new Error('api-key input is required');
     if (!baseSha || !headSha) throw new Error('could not resolve base/head SHA from the event');
 
     // X.21 — BEFORE anything is derived, because the request to skip is itself the violation and
@@ -210,28 +248,66 @@ async function runGate({
       };
     }
 
-    // 1b. require-receipt-trailer (T4, opt-in): the head commit must carry its own receipt, verified
-    // OFFLINE against the pinned keyring and bound to THIS diff by artifact_digest. Checked before
-    // the preflight call so a run that can only fail spends no network call. Off → nothing runs.
-    if (requireReceiptTrailer === true) {
+    // 1b. Head-commit receipt. The legacy flag fails closed before any network call.
+    // The enforcing profile does the same for a receipt that is present and wrong, and it
+    // does not call preflight when the receipt verifies. A missing receipt is the only
+    // case that falls through to issuance.
+    const monitoringOn = enforcing || requireVerifiedMonitoring === true;
+    let carried = null;
+    if (enforcing || requireReceiptTrailer === true) {
       const trailerKeyring = await loadKeyring(keyringPath);
-      const t = checkReceiptTrailer({ headSha, cwd, keyring: trailerKeyring, artifacts });
-      if (!t.ok) {
-        const summary = [
-          '❌ **CodeRifts contract-gate: FAILED**', '',
-          `- reason: \`${t.reason}\``,
-          `- head commit: \`${headSha}\``,
-          ...(t.carrier ? [`- carrier: \`${t.carrier}\``] : []),
-          ...(t.status ? [`- status: \`${t.status}\``] : []),
-          ...(t.detail ? ['', t.detail] : []), '',
-          '`require-receipt-trailer` is on: the head commit must carry a `CodeRifts-Receipt:` trailer',
-          'or a `.coderifts/receipts/<sha>.json` sidecar whose receipt verifies offline, is an ALLOW,',
-          'and covers exactly the contract diff of this pull request.',
-        ].join('\n');
+      let monitoringKeyring = null;
+      if (monitoringKeyringPath) monitoringKeyring = loadMonitoringKeyring(monitoringKeyringPath);
+      const t = checkReceiptTrailer({
+        headSha, cwd, keyring: trailerKeyring, artifacts,
+        profile: enforcing ? 'enforcing' : null,
+        requireVerifiedMonitoring: monitoringOn,
+        monitoringAttestation,
+        monitoringKeyring,
+      });
+      if (t.ok && enforcing) {
+        carried = t;
+      } else if (!t.ok && !(enforcing && t.reason === 'receipt_trailer_missing')) {
+        const summary = enforcing
+          ? linesForReceipt(t, headSha, placeOf(t.carrier))
+          : [
+            '❌ **CodeRifts contract-gate: FAILED**', '',
+            `- reason: \`${t.reason}\``,
+            `- head commit: \`${headSha}\``,
+            ...(t.carrier ? [`- carrier: \`${t.carrier}\``] : []),
+            ...(t.status ? [`- status: \`${t.status}\``] : []),
+            ...(t.detail ? ['', t.detail] : []), '',
+            '`require-receipt-trailer` is on: the head commit must carry a `CodeRifts-Receipt:` trailer',
+            'or a `.coderifts/receipts/<sha>.json` sidecar whose receipt verifies offline, is an ALLOW,',
+            'and covers exactly the contract diff of this pull request.',
+          ].join('\n');
         await emitCheck('failure', 'Blocked — no verified receipt on the head commit', summary);
-        return { exitCode: 1, gate: { pass: false, reason: t.reason }, receiptTrailer: t, artifactCount: artifacts.length };
+        return { exitCode: 1, gate: { pass: false, reason: t.reason, summary }, receiptTrailer: t, artifactCount: artifacts.length };
+      } else if (t.ok) {
+        log(`contract-gate: head-commit receipt verified offline (${t.carrier})`);
       }
-      log(`contract-gate: head-commit receipt verified offline (${t.carrier})`);
+    }
+
+    if (carried) {
+      const summary = linesForReceipt(carried, headSha, placeOf(carried.carrier));
+      await emitCheck('success', 'Signed ALLOW verified for this diff', summary);
+      log(`contract-gate: PASS (receipt_trailer_verified); files=${changedContractFiles.join(',')}`);
+      return {
+        exitCode: 0,
+        gate: { pass: true, reason: 'signed_allow_for_diff', summary, preflight: false },
+        receiptTrailer: carried,
+        artifactCount: artifacts.length,
+      };
+    }
+
+    if (enforcing && !apiKey) {
+      const summary = linesForReceipt({ ok: false, reason: 'receipt_trailer_missing' }, headSha, 'n/a');
+      await emitCheck('failure', 'Blocked — no verified receipt on the head commit', summary);
+      return {
+        exitCode: 1,
+        gate: { pass: false, reason: 'receipt_trailer_missing', summary },
+        artifactCount: artifacts.length,
+      };
     }
 
     // 2. preflight (v4 receipt path). Decision Spec 2.0: authorize (gate ENFORCES merge, needs a
@@ -251,6 +327,42 @@ async function runGate({
     const preflightResponse = await preflightImpl({
       apiKey, apiUrl, artifacts, context, preflight_mode: 'authorize', fetchImpl,
     });
+
+    // Enforcing, and the head commit had no receipt. The response is only a carrier:
+    // decision_result is the envelope, chain_receipt is the token, and the pass is the
+    // same offline judge. Nothing is written back onto the commit.
+    if (enforcing) {
+      const issueKeyring = await loadKeyring(keyringPath);
+      let monitoringKeyring = null;
+      if (monitoringKeyringPath) monitoringKeyring = loadMonitoringKeyring(monitoringKeyringPath);
+      const issued = judgeReceipt({
+        token: preflightResponse && preflightResponse.chain_receipt,
+        envelope: preflightResponse && preflightResponse.decision_result,
+        carrier: null,
+        keyring: issueKeyring,
+        artifacts,
+        profile: 'enforcing',
+        requireVerifiedMonitoring: true,
+        monitoringAttestation,
+        monitoringKeyring,
+      });
+      const summary = linesForReceipt(issued, headSha, ISSUED_PLACE);
+      if (!issued.ok) {
+        await emitCheck('failure', 'Blocked — issued receipt did not verify', summary);
+        return {
+          exitCode: 1,
+          gate: { pass: false, reason: issued.reason, summary, preflight: true },
+          artifactCount: artifacts.length,
+        };
+      }
+      await emitCheck('success', 'Signed ALLOW verified for this diff', summary);
+      log(`contract-gate: PASS (issued receipt verified offline); files=${changedContractFiles.join(',')}`);
+      return {
+        exitCode: 0,
+        gate: { pass: true, reason: 'signed_allow_for_diff', summary, preflight: true },
+        artifactCount: artifacts.length,
+      };
+    }
 
     // 3-5. verify offline against the PINNED keyring + rebind to THIS PR (P0-1).
     // Current head/base come from GITHUB_EVENT_PATH pull_request.head/base.sha (not GITHUB_SHA).
@@ -372,6 +484,7 @@ async function main() {
     monitoringKeyringPath: process.env['INPUT_MONITORING-KEYRING'] || null,
     requireGrant: parseBoolInput(process.env['INPUT_REQUIRE-GRANT'], false),
     requireReceiptTrailer: parseBoolInput(process.env['INPUT_REQUIRE-RECEIPT-TRAILER'], false),
+    profile: process.env['INPUT_PROFILE'] || 'enforcing',
     executionGrant: process.env['INPUT_EXECUTION-GRANT'] || null,
     grantKeyringPath: process.env['INPUT_GRANT-KEYRING'] || null,
     grantOperation: process.env['INPUT_GRANT-OPERATION'] || 'merge',
