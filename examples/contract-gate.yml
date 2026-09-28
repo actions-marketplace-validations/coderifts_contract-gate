@@ -1,9 +1,14 @@
 # Copy this to `.github/workflows/contract-gate.yml` in YOUR repository.
 #
-# It runs the CodeRifts contract gate on every pull request. The gate posts a Check Run named
-# EXACTLY:  CodeRifts / contract-gate
-# And the App check: CodeRifts / issuer
+# It runs the CodeRifts contract gate on every pull request. The required context is the JOB named
+# EXACTLY:  CodeRifts / contract-gate      (posted by GitHub Actions, integration_id 15368)
+# And the App check: CodeRifts / issuer     (posted by the CodeRifts App, integration_id 2860592)
 # Make BOTH strings required status checks (see ENFORCEMENT.md). One of them alone is not the gate.
+#
+# ⚠ TRANSITION (2026-09-28): the CodeRifts App no longer posts `CodeRifts / contract-gate`; it
+# posts `CodeRifts / issuer`. If your ruleset required `CodeRifts / contract-gate` bound to the App
+# (2860592), replace it with `CodeRifts / issuer` bound to 2860592 and add
+# `CodeRifts / contract-gate` bound to 15368 — this workflow's job below.
 name: CodeRifts Contract Gate
 
 # Run on EVERY pull request to the protected branch. Do NOT add `paths:` filters — a path filter
@@ -21,7 +26,8 @@ permissions:
   contents: read
 
 jobs:
-  contract-gate:
+  contract-gate-action:
+    name: contract-gate (Action)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +39,9 @@ jobs:
       - uses: coderifts/contract-gate@v0
         with:
           api-key: ${{ secrets.CODERIFTS_API_KEY }}
+          # The job below carries the required name. If the action posted its own check under the
+          # same name, one context would have two check-runs from one poster.
+          post-check-run: 'false'
           # api-url: https://app.coderifts.com   # override only for self-hosted
           #
           # Optional — require a signed CWM delivery attestation (guard ≥9.2.0).
@@ -42,54 +51,31 @@ jobs:
           # monitoring-attestation: ${{ vars.CODERIFTS_MONITORING_ATTESTATION }}
           # monitoring-keyring: ${{ github.workspace }}/.coderifts/monitoring-keys.json
 
+  contract-gate:
+    name: "CodeRifts / contract-gate"     # ← the required context, verbatim
+    needs: [contract-gate-action]
+    # ⚠ `always()` IS THE LOAD-BEARING WORD. Without it this job is itself SKIPPED whenever the
+    # job it needs was skipped, cancelled or failed — and a skipped required check passes.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: the gate ran and succeeded — skipped is not success
+        env:
+          GATE_RESULT: ${{ needs.contract-gate-action.result }}
+        run: |
+          echo "contract-gate-action result: $GATE_RESULT"
+          # success | failure | cancelled | skipped — only the first is a pass.
+          [ "$GATE_RESULT" = "success" ] || exit 1
+
 # ─────────────────────────────────────────────────────────────────────────────────────────────
-# ⚠ IF YOU REQUIRE A JOB NAME INSTEAD OF THE POSTED CHECK NAME, READ THIS.
+# ⚠ WHY THE REQUIRED CONTEXT IS A JOB WITH `always()`, AND NOT THE ACTION'S OWN CHECK-RUN.
 #
-# The job above is safe as written because the required context is the check-run the ACTION
-# POSTS (`CodeRifts / contract-gate`). If the job never runs, that check never reports, the
-# context stays "expected", and the pull request does not merge — fail-closed on absence.
+# GitHub's rule, measured on coderifts/demo 2026-09-23 (the `canary` job concluded `skipped`):
+# "Required status checks must have a `successful`, `skipped`, or `neutral` status before
+# collaborators can make changes to a protected branch." A skipped required check PASSES. The job
+# above runs even when the gate job was skipped, cancelled or timed out, and turns anything that
+# is not `success` into a failure — measured enforcing on coderifts/demo PR #4 (BLOCKED).
 #
-# The moment you set `post-check-run: 'false'` and require the JOB's own check instead — which is
-# what you do to avoid the two-integrations name collision (see README, "Two integrations, one
-# name") — the shape inverts, because a JOB can be SKIPPED and a skipped job reports `skipped`.
-#
-# ⚠ MEASURED, and it is GitHub's own rule, not an opinion: "Required status checks must have a
-# `successful`, `skipped`, or `neutral` status before collaborators can make changes to a
-# protected branch." A SKIPPED required check therefore PASSES. Confirmed on coderifts/demo
-# 2026-09-23: the `canary` job's check-run concluded `skipped` on the pull-request head.
-#
-# So a job-name required check needs an AGGREGATOR that runs even when the thing it watches did
-# not, and turns anything that is not a success into a FAILURE:
-#
-#   jobs:
-#     contract-gate-action:
-#       name: contract-gate (Action)
-#       runs-on: ubuntu-latest
-#       steps:
-#         - uses: actions/checkout@v4
-#           with: { fetch-depth: 0 }
-#         - uses: coderifts/contract-gate@v0
-#           with:
-#             api-key: ${{ secrets.CODERIFTS_API_KEY }}
-#             post-check-run: 'false'      # the aggregator below is the required context
-#
-#     contract-gate-required:
-#       name: contract-gate (required)     # ← require THIS name in branch protection
-#       needs: [contract-gate-action]
-#       # ⚠ `always()` IS THE LOAD-BEARING WORD. Without it this job is itself SKIPPED whenever
-#       # the job it needs was skipped, cancelled or failed — and a skipped required check passes.
-#       # The aggregator would then be green exactly when the gate did not run.
-#       if: always()
-#       runs-on: ubuntu-latest
-#       steps:
-#         - name: the gate ran and succeeded — skipped is not success
-#           run: |
-#             result="${{ needs.contract-gate-action.result }}"
-#             echo "contract-gate-action result: $result"
-#             # success | failure | cancelled | skipped — only the first is a pass.
-#             [ "$result" = "success" ] || exit 1
-#
-# ⚠ `[skip coderifts]` needs NO aggregator help: the action refuses the request and concludes
-# `failure` (src/explicit-skip.js, outcome EXPLICIT_SKIP_NOT_ALLOWED), because a neutral would
-# leave the pull request mergeable. The aggregator covers the cases the action never reaches —
-# the job being skipped, cancelled or timed out before it ran at all.
+# ⚠ `[skip coderifts]` needs no help: the action refuses the request and concludes `failure`
+# (src/explicit-skip.js, outcome EXPLICIT_SKIP_NOT_ALLOWED), because a neutral would leave the
+# pull request mergeable.

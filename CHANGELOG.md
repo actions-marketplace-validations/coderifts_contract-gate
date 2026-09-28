@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (after v0.11.0) — docs, example and tests
+
+- **The reader's context is one string, carried by the measured-enforcing shape.** The example
+  workflow's `if: always()` aggregator job is now named `CodeRifts / contract-gate` verbatim (it was
+  `contract-gate (required)`, a name no doc told anyone to require), and the gate step runs with
+  `post-check-run: 'false'` so one poster carries the name. `CHECK_NAME`, the `check-name` default,
+  that job name, ENFORCEMENT.md and docs/ENFORCEMENT-RUNBOOK.md now say the same string beside
+  `CodeRifts / issuer`.
+- **Transition, stated where operators configure it:** the App no longer posts
+  `CodeRifts / contract-gate`; a ruleset that required it bound to 2860592 moves to
+  `CodeRifts / issuer` (2860592) plus `CodeRifts / contract-gate` (15368).
+- `test/context-name-one-string.test.js` holds it.
+
 ## 0.10.0
 
 - New optional input `require-receipt-trailer` (default `false`). When `true`, the head commit's receipt (trailer or sidecar) must verify offline against the pinned keyring, its `artifact_digest` must match the pull request's diff digest, and its `execution_action` must be `CONTINUE`; any failure is a failing check before the preflight call. A trailer alone (no envelope) fails with `receipt_envelope_required`.

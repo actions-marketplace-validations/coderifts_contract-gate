@@ -78,7 +78,9 @@ reason (`receipt_trailer_missing`, `receipt_trailer_conflict`, `receipt_trailer_
 
 ## Two required checks
 
-This Action posts `CodeRifts / contract-gate` (the reader). The App posts `CodeRifts / issuer`.
+The reader's context is `CodeRifts / contract-gate`: in the example workflow it is the `if: always()` job
+of that name (GitHub Actions, 15368), with this Action's own check turned off (`post-check-run: 'false'`).
+The App posts `CodeRifts / issuer` (2860592); it no longer posts `CodeRifts / contract-gate`.
 Branch protection requires both. One of them alone is not the gate. With `profile: enforcing`
 (the default) a valid head-commit receipt is verified offline and the run does not call preflight;
 a pull request with no trailer is issued a receipt, that receipt is verified offline, and it is

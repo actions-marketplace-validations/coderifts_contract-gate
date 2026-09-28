@@ -27,10 +27,12 @@ inputs:
   post-check-run:
     description: >-
       Whether this Action posts its own Check Run. Default true. Set to the exact string 'false'
-      where the CodeRifts App webhook already posts the required check: the Action runs under the
-      generic GitHub Actions identity, so a check it posts under the required name comes from a
-      DIFFERENT issuer than the App's, and a readback cannot tell which one satisfied the
-      requirement. Only 'false' disables it; a typo leaves the check posting.
+      where another job already carries the required name — the example workflow's
+      `if: always()` job named "CodeRifts / contract-gate". Both would post under the
+      generic GitHub Actions identity, so two check-runs under one name come from one issuer
+      and a readback cannot tell which one satisfied the requirement. (The CodeRifts App posts
+      "CodeRifts / issuer", a different name, since 2026-09-28.) Only 'false' disables it; a
+      typo leaves the check posting.
     required: false
     default: 'true'
   require-verified-monitoring:

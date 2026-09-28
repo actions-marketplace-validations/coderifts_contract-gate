@@ -32,8 +32,9 @@ Note its **App ID** — it is the `integration_id` in step 3.
 gh api /repos/<owner>/<repo>/installations --jq '.installations[] | {app_id, app_slug}'
 ```
 
-> Our demo does not use a dedicated App: it is enforced by the **Action**, whose check runs are
-> posted by GitHub Actions itself — `integration_id 15368`. Both shapes work. A dedicated App is
+> The reader's context `CodeRifts / contract-gate` is the example workflow's `if: always()` job,
+> so GitHub records GitHub Actions itself — `integration_id 15368`. The App's context
+> `CodeRifts / issuer` is bound to the CodeRifts App, `integration_id 2860592`. Both shapes work. A dedicated App is
 > for when you want the check attributable to an identity you control rather than to the shared
 > Actions identity, which any workflow in the repository also carries.
 
@@ -42,13 +43,16 @@ gh api /repos/<owner>/<repo>/installations --jq '.installations[] | {app_id, app
 ```bash
 OWNER_REPO=<owner>/<repo>
 BRANCH=main
-CONTEXT='CodeRifts / contract-gate (Action)'   # or your dedicated App's check name
+# Two fixed contexts: the reader (the workflow's always() job) and the issuer (the App).
 
 gh api -X PUT "repos/$OWNER_REPO/branches/$BRANCH/protection" --input - <<JSON
 {
   "required_status_checks": {
     "strict": true,
-    "checks": [{ "context": "$CONTEXT", "app_id": 15368 }]
+    "checks": [
+      { "context": "CodeRifts / contract-gate", "app_id": 15368 },
+      { "context": "CodeRifts / issuer", "app_id": 2860592 }
+    ]
   },
   "enforce_admins": true,
   "required_pull_request_reviews": null,
@@ -68,7 +72,7 @@ gh api "repos/$OWNER_REPO/branches/$BRANCH/protection" \
   --jq '{checks: .required_status_checks.checks, strict: .required_status_checks.strict, admins: .enforce_admins.enabled}'
 ```
 
-Measured on `coderifts/demo`, 2026-09-02:
+Measured on `coderifts/demo`, 2026-09-02, **before the rename** (history, not the target shape):
 
 ```json
 {"admins":true,"checks":[{"app_id":15368,"context":"CodeRifts / contract-gate (Action)"}],"strict":true}
@@ -95,7 +99,8 @@ gh api -X POST "repos/$OWNER_REPO/rulesets" --input - <<'JSON'
         "strict_required_status_checks_policy": true,
         "do_not_enforce_on_create": false,
         "required_status_checks": [
-          { "context": "CodeRifts / contract-gate (Action)", "integration_id": 15368 }
+          { "context": "CodeRifts / contract-gate", "integration_id": 15368 },
+          { "context": "CodeRifts / issuer", "integration_id": 2860592 }
         ]
       }
     }
@@ -104,8 +109,15 @@ gh api -X POST "repos/$OWNER_REPO/rulesets" --input - <<'JSON'
 JSON
 ```
 
-That body is the one in force on `coderifts/demo` (ruleset id `22074842`), reproduced from its
-readback. Substitute your own context and `integration_id`.
+The two contexts are fixed; only a dedicated enforcement App (step 1) changes the reader's
+`integration_id`. `coderifts/demo` (ruleset id `22074842`) requires `CodeRifts / issuer` (2860592)
+and, until its workflow job is renamed, `contract-gate (required)` (15368) in the reader's place.
+
+**Transition (2026-09-28).** The CodeRifts App no longer posts `CodeRifts / contract-gate`; it posts
+`CodeRifts / issuer`. If your ruleset required `CodeRifts / contract-gate` bound to the App
+(`integration_id` 2860592), replace that entry with `CodeRifts / issuer` bound to 2860592 and add
+`CodeRifts / contract-gate` bound to 15368 (the workflow's always() job) — otherwise every pull
+request waits for a check nobody posts.
 
 ## 4. Readback proof
 
@@ -116,7 +128,7 @@ node scripts/readback.js <owner>/<repo> <pr-number> --expect-app <your-app-slug>
 What a correctly bound repository looks like:
 
 ```
-required context: "CodeRifts / contract-gate (Action)"
+required context: "CodeRifts / contract-gate"
   source-bound:   yes (app_id 15368)
   readback:       EXACT
   posted by:      github-actions (app_id 15368) -> failure

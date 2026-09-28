@@ -22,24 +22,19 @@ The required status check context string must be **EXACTLY**:
 CodeRifts / contract-gate
 ```
 
-This is the default `CHECK_NAME` in `src/check-run.js`. The check-run **name** is what branch
-protection matches — **not** the workflow name and **not** the job name.
+In the example workflow this name is the **job name** of the aggregator job (`if: always()`), so its
+check-run is posted by GitHub Actions (`integration_id` 15368). The gate step in the job before it runs
+with `post-check-run: 'false'`, so nothing else posts the same name. It is also the default `CHECK_NAME`
+in `src/check-run.js` — what the action posts itself when `post-check-run` is left `true` in a
+single-job workflow. One poster per name, either way.
 
-**When two integrations post the same name.** The CodeRifts GitHub App posts a check named
-`CodeRifts / contract-gate` as well. A repository running both the App and this Action shows two
-checks under one name, and a required-check context cannot distinguish them. The Action's
-`check-name` input exists for that case only:
+The CodeRifts App posts the second context, `CodeRifts / issuer` (`integration_id` 2860592).
 
-```yaml
-      - uses: coderifts/contract-gate@v0
-        with:
-          api-key: ${{ secrets.CODERIFTS_API_KEY }}
-          check-name: 'contract-gate (Action)'
-```
-
-If you set it, **require that name instead** — everything below applies to whichever name is
-actually posted. Leave the default when only the Action runs: a name changed for no reason is the
-same misconfiguration this section exists to prevent, arriving from the other direction.
+**Transition (2026-09-28).** The CodeRifts App no longer posts `CodeRifts / contract-gate`; it posts
+`CodeRifts / issuer`. If your branch protection or ruleset required `CodeRifts / contract-gate` bound to
+the App (`integration_id` 2860592), replace that entry with `CodeRifts / issuer` bound to 2860592, and
+add `CodeRifts / contract-gate` bound to GitHub Actions (15368) — the example workflow's job. Otherwise
+every pull request waits for a check nobody posts.
 
 > ⚠️ **If the required-check context does not byte-match the posted name, branch protection silently
 > never blocks** — the required check stays perpetually "expected / pending" against a check that,
@@ -55,7 +50,7 @@ branch):
 2. Check **Require status checks to pass before merging**.
 3. Check **Require branches to be up to date before merging** (this is `strict` — see "fail-closed
    on absence" below).
-4. In the search box, add both required contexts: **`CodeRifts / contract-gate`** (the reader, this Action) and **`CodeRifts / issuer`** (the App check). One of them alone is not the gate.
+4. In the search box, add both required contexts: **`CodeRifts / contract-gate`** (the reader: the example's aggregator job) and **`CodeRifts / issuer`** (the App check). One of them alone is not the gate.
 5. Check **Do not allow bypassing the above settings** / **Include administrators** (see SECURITY.md).
 6. **Create / Save changes**.
 
@@ -121,29 +116,11 @@ conclusions that mean THE CHECK SAID NOTHING are exactly the two that let the me
 **Measured on `coderifts/demo`, 2026-09-23:** the `canary` job's check-run on the pull-request head
 concluded `skipped`. A required context in that state is green.
 
-**When this reaches you.** It does not, as long as the required context is the check-run this
-ACTION posts — the action either posts a conclusion or posts nothing, and nothing is blocked by
-absence. It reaches you the moment you set `post-check-run: 'false'` and require the JOB's own
-check instead, which is what requiring the job name instead of the posted check leads to. A job can be
-skipped; a job's check-run can therefore conclude `skipped`; and that is a pass.
-
-**The fix is an aggregator, and `always()` is the load-bearing word** — without it the aggregator
-is itself skipped whenever the job it watches was skipped, so it is green exactly when the gate did
-not run. The full snippet is in [`examples/contract-gate.yml`](examples/contract-gate.yml); the
-shape is:
-
-```yaml
-  contract-gate-required:
-    name: contract-gate (required)      # ← require THIS name
-    needs: [contract-gate-action]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          result="${{ needs.contract-gate-action.result }}"
-          # success | failure | cancelled | skipped — only the first is a pass.
-          [ "$result" = "success" ] || exit 1
-```
+**Why the example requires a job, and which job.** The gate job itself can be skipped, and a skipped
+required check passes. So the required context is the aggregator job named `CodeRifts / contract-gate`,
+which runs `if: always()` and fails on anything that is not `success` — measured enforcing on
+`coderifts/demo` PR #4 (BLOCKED). Do not require the gate job's own name (`contract-gate (Action)`).
+The full job is in [`examples/contract-gate.yml`](examples/contract-gate.yml).
 
 ⚠ **`[skip coderifts]` does not need the aggregator.** A skip requested in a PR title, a commit
 message or `CODERIFTS_SKIP` is REFUSED by the action and concluded `failure`, not `neutral`
