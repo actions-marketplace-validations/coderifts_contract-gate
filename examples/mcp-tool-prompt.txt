@@ -1,0 +1,3 @@
+If structuredContent.receipt is absent or its target_id is not the digest of this diff, do not call the tool. A 200 and an access token are not a grant.
+
+This line is a client instruction. An OAuth 2.1 bearer authorizes the transport. It is not a change grant. A static MCP linter is not this gate. Putting a receipt field on the tool wire would move the pinned tools digest, so this file does not.

@@ -1,0 +1,20 @@
+{
+  "_type": "layout",
+  "expires": "2027-09-28T00:00:00Z",
+  "readme": "One step, threshold 2: the reader key and the issuer key, and they are distinct. expected_command is omitted because the in-toto spec says a command is forgeable via PATH and is not a security check. Both links record one product, diff, and that product's hash is the receipt artifact_digest. The functionary public keys are the ones in keyring/pinned-keys.json, which the action already loads. That file has one key today, kid 2026-07-k1, so this layout does not verify until a second distinct public key is added there. Do not invent a key, and do not copy one into this file. An unsigned change to the pinned key file makes the threshold meaningless.",
+  "keys": {},
+  "steps": [
+    {
+      "_type": "step",
+      "name": "decide",
+      "threshold": 2,
+      "expected_materials": [],
+      "expected_products": [
+        ["CREATE", "diff"],
+        ["DISALLOW", "*"]
+      ],
+      "pubkeys": ["reader", "issuer"]
+    }
+  ],
+  "inspect": []
+}

@@ -52,6 +52,14 @@ inputs:
       profile. Any other value keeps the historical preflight path.
     required: false
     default: 'enforcing'
+  predicate-path:
+    description: >-
+      Workspace file written after a receipt verifies on the enforcing profile.
+      The file is four fields copied off that receipt (execution_action, operation,
+      target_id, expires_at). It is not signed and it is not committed.
+      An empty string writes nothing.
+    required: false
+    default: 'decision-predicate.json'
   require-receipt-trailer:
     description: >-
       When true, the head commit must carry its own receipt — a `CodeRifts-Receipt:` commit trailer

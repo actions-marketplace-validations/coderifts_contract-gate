@@ -1,0 +1,59 @@
+# Admit a Pod only when the image carries a decision attestation the gate already verified.
+#
+# The image digest and predicate.target_id are different objects. target_id is the
+# PR-diff digest. This policy reads the predicate. It does not treat the image
+# digest as that target. GitHub stores a non-image subject in the attestation
+# API; Kyverno reads an attestation from the image registry, and only after a
+# later step has attached this same predicate to the real image.
+#
+# The attestor is the workflow's keyless identity
+# (https://token.actions.githubusercontent.com). The receipt's pinned key is a
+# separate offline check and is not copied into this file.
+#
+# Kyverno v1.9.0 through v1.12.7 (CVE-2026-84200): when two PolicyExceptions
+# match, the wider glob wins even under Enforce. Fixed in 1.13.0. Keep one
+# PolicyException, and give it a literal name, not a glob.
+# Leave the transparency log on. The rekor URL below is the public log.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: coderifts-decision
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+spec:
+  validationFailureAction: Enforce
+  failurePolicy: Fail
+  background: false
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: require-decision
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            - ghcr.io/ORG/IMAGE*
+          failureAction: Enforce
+          required: true
+          type: SigstoreBundle
+          attestations:
+            - predicateType: https://coderifts.com/attestations/decision/v1
+              type: https://coderifts.com/attestations/decision/v1
+              attestors:
+                - count: 1
+                  entries:
+                    - keyless:
+                        issuer: https://token.actions.githubusercontent.com
+                        subject: https://github.com/ORG/REPO/.github/workflows/attest-decision.yml@refs/heads/main
+                        rekor:
+                          url: https://rekor.sigstore.dev
+              conditions:
+                - all:
+                    - key: "{{ execution_action }}"
+                      operator: Equals
+                      value: CONTINUE
+                    - key: "{{ operation }}"
+                      operator: Equals
+                      value: merge

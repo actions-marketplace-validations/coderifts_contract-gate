@@ -34,6 +34,7 @@ const { OUTCOME_CODE, OUTCOME_CONCLUSION } = require('./outcome-code');
 const { detectExplicitSkip, commitMessagesInRange } = require('./explicit-skip');
 const { checkReceiptTrailer, judgeReceipt } = require('./receipt-trailer');
 const { receiptDigest } = require('./monitoring-attestation');
+const { writeDecisionPredicate } = require('./decision-predicate');
 
 const PINNED_KEYRING_PATH = path.join(__dirname, '..', 'keyring', 'pinned-keys.json');
 const ISSUED_PLACE = 'issued in this run — not in the commit';
@@ -158,6 +159,8 @@ async function runGate({
   requireReceiptTrailer = false,
   // 1966 — the reader. Unset keeps every existing caller on the preflight path.
   profile = null,
+  // Set only by main(). Unit callers omit it, so a test run writes no file.
+  predicatePath = null,
 }) {
   const emitCheck = async (conclusion, title, summary, text = null) => {
     // 1334 — DELIBERATE opt-out, distinct from "we had no token".
@@ -290,6 +293,7 @@ async function runGate({
 
     if (carried) {
       const summary = linesForReceipt(carried, headSha, placeOf(carried.carrier));
+      writeDecisionPredicate(predicatePath, carried);
       await emitCheck('success', 'Signed ALLOW verified for this diff', summary);
       log(`contract-gate: PASS (receipt_trailer_verified); files=${changedContractFiles.join(',')}`);
       return {
@@ -355,6 +359,7 @@ async function runGate({
           artifactCount: artifacts.length,
         };
       }
+      writeDecisionPredicate(predicatePath, issued);
       await emitCheck('success', 'Signed ALLOW verified for this diff', summary);
       log(`contract-gate: PASS (issued receipt verified offline); files=${changedContractFiles.join(',')}`);
       return {
@@ -464,6 +469,14 @@ async function runGate({
   }
 }
 
+function predicatePathFromInput() {
+  if (!Object.prototype.hasOwnProperty.call(process.env, 'INPUT_PREDICATE-PATH')) {
+    return path.join(process.env.GITHUB_WORKSPACE || process.cwd(), 'decision-predicate.json');
+  }
+  const raw = String(process.env['INPUT_PREDICATE-PATH'] || '').trim();
+  return raw || null;
+}
+
 async function main() {
   const ev = readEvent(process.env.GITHUB_EVENT_PATH);
   const res = await runGate({
@@ -485,6 +498,7 @@ async function main() {
     requireGrant: parseBoolInput(process.env['INPUT_REQUIRE-GRANT'], false),
     requireReceiptTrailer: parseBoolInput(process.env['INPUT_REQUIRE-RECEIPT-TRAILER'], false),
     profile: process.env['INPUT_PROFILE'] || 'enforcing',
+    predicatePath: predicatePathFromInput(),
     executionGrant: process.env['INPUT_EXECUTION-GRANT'] || null,
     grantKeyringPath: process.env['INPUT_GRANT-KEYRING'] || null,
     grantOperation: process.env['INPUT_GRANT-OPERATION'] || 'merge',

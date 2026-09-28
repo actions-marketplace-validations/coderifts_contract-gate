@@ -9,8 +9,11 @@ name: CodeRifts Contract Gate
 # Run on EVERY pull request to the protected branch. Do NOT add `paths:` filters — a path filter
 # would skip contract PRs the filter doesn't match, and a required check that never runs leaves the
 # PR mergeable with the check "pending" (see ENFORCEMENT.md, "fail-closed on absence").
+# merge_group is a different commit from the PR head. A required check that only listens to
+# pull_request is never reported on the queue, and GitHub then refuses the merge.
 on:
   pull_request:
+  merge_group:
 
 # Least privilege: write checks (to post the Check Run) + read the code (to derive the diff).
 permissions:

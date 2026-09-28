@@ -1,0 +1,67 @@
+# Attest the decision the gate already verified.
+#
+# The gate writes decision-predicate.json after a local verify. This workflow
+# does not sign the receipt and does not add a field to it. The subject is the
+# PR-diff digest (the predicate's target_id). That digest is not an image, so
+# push-to-registry stays off: actions/attest only pushes when the subject is
+# one real OCI image.
+#
+# Verify the diff-digest subject with a local file whose sha256 is that digest:
+#   gh attestation verify PATH \
+#     --repo ORG/REPO \
+#     --predicate-type https://coderifts.com/attestations/decision/v1 \
+#     --deny-self-hosted-runners
+# oci:// applies only after a later step attests a real image with this same
+# predicate and pushes that attestation to the image registry. This workflow
+# does not: the subject here is the diff digest.
+#   gh attestation verify oci://ghcr.io/ORG/IMAGE@sha256:DIGEST \
+#     --repo ORG/REPO \
+#     --predicate-type https://coderifts.com/attestations/decision/v1 \
+#     --deny-self-hosted-runners
+#   gh attestation verify PATH --bundle-from-oci \
+#     --repo ORG/REPO \
+#     --predicate-type https://coderifts.com/attestations/decision/v1
+name: Attest the verified decision
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  id-token: write
+  attestations: write
+  contents: read
+
+jobs:
+  attest-decision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: coderifts/contract-gate@v0
+        with:
+          api-key: ${{ secrets.CODERIFTS_API_KEY }}
+
+      - name: subject is the verified diff digest
+        id: decision
+        run: |
+          node -e '
+            const fs = require("fs");
+            const p = JSON.parse(fs.readFileSync("decision-predicate.json", "utf8"));
+            if (typeof p.target_id !== "string" || !/^sha256:[0-9a-f]{64}$/.test(p.target_id)) {
+              console.error("predicate target_id is not the diff digest");
+              process.exit(1);
+            }
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, "target_id=" + p.target_id + "\n");
+          '
+
+      # Exactly one predicate input and exactly one subject input.
+      # subject-name is required when the subject is given as a digest.
+      - uses: actions/attest@v4
+        with:
+          subject-name: pr-diff
+          subject-digest: ${{ steps.decision.outputs.target_id }}
+          predicate-type: https://coderifts.com/attestations/decision/v1
+          predicate-path: decision-predicate.json

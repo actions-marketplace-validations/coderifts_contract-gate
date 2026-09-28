@@ -15,8 +15,20 @@ const path = require('node:path');
 const { CHECK_NAME } = require('../src/check-run');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
+const ISSUER_CHECK_NAME = 'CodeRifts / issuer';
+
 test('CHECK_NAME is the exact, stable context string', () => {
   assert.equal(CHECK_NAME, 'CodeRifts / contract-gate');
+});
+
+test('the issuer context is a second frozen string, not a rename of CHECK_NAME', () => {
+  const script = read('scripts/require-contract-gate.sh');
+  const action = read('action.yml');
+  const docs = read('ENFORCEMENT.md');
+  assert.notEqual(ISSUER_CHECK_NAME, CHECK_NAME);
+  assert.ok(script.includes(`ISSUER_CONTEXT="${ISSUER_CHECK_NAME}"`));
+  assert.ok(docs.includes(ISSUER_CHECK_NAME));
+  assert.match(action, /default:\s*'CodeRifts \/ contract-gate'/);
 });
 
 test('the setup script pins the SAME context as CHECK_NAME', () => {
@@ -37,6 +49,7 @@ test('ENFORCEMENT.md documents the exact context string + strict + admins', () =
 test('example workflow is fail-closed-on-absence: runs on every PR, no path filter, right perms', () => {
   const w = read('examples/contract-gate.yml');
   assert.match(w, /on:\s*\n\s*pull_request:/, 'must trigger on pull_request');
+  assert.match(w, /merge_group:/, 'a merge queue never reports a pull_request-only check');
   assert.ok(!/\n\s*paths:/.test(w), 'must NOT have a paths: filter (would skip contract PRs)');
   assert.match(w, /fetch-depth:\s*0/, 'must checkout full history for base...head diff');
   assert.match(w, /checks:\s*write/);
