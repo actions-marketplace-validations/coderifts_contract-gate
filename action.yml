@@ -1,5 +1,5 @@
 name: 'CodeRifts Contract Gate'
-description: 'Blocks a merge unless a signed ALLOW receipt verifies offline against a pinned keyring for the PR''s actual head diff. The receipt may be a compact token or a DSSE/in-toto envelope (the gate unwraps the envelope and verifies the compact bytes; the envelope is not itself a pass). With require-grant: true the gate verifies a cr.exec.v1 or cr.exec.v2 grant token offline. With require_verified_monitoring: true the gate verifies a cr.monitor.attest.v1 token offline against a pinned monitoring keyring (CWM passes only on delivered_acked); by default it passes CWM on the host''s claim.'
+description: 'A required check: the pull request''s actual contract diff does not merge without a signed CodeRifts receipt. With a receipt trailer the Action verifies it offline against a pinned keyring; without one it issues a receipt with the repository key, verifies it the same way, and puts it in the check summary — never in the commit. Options verify execution grants and monitoring attestations offline.'
 author: 'CodeRifts'
 branding:
   icon: 'lock'
