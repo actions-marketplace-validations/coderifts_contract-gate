@@ -1,0 +1,447 @@
+openapi: "3.0.3"
+info:
+  title: Acme API
+  description: "The Acme API provides programmatic access to user management, order processing, payment handling, and webhook integrations for the Acme platform."
+  version: "1.5.0"
+  contact:
+    name: Acme API Team
+    email: api@acme.example.com
+    url: https://developer.acme.example.com
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+paths:
+  /users/{id}:
+    get:
+      summary: Get user by ID
+      description: "Retrieves a single user record by their unique identifier. Returns the full user profile including contact information and account metadata."
+      operationId: getUser
+      tags:
+        - Users
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "The unique identifier of the user to retrieve."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+              example:
+                id: "usr_abc123"
+                email: "jane@example.com"
+                name: "Jane Doe"
+                phone: "+1-555-0100"
+                created_at: "2025-01-15T10:30:00Z"
+        "404":
+          description: User not found
+        "401":
+          description: Unauthorized — missing or invalid bearer token
+  /users:
+    post:
+      summary: Create user
+      description: "Creates a new user account in the Acme platform. Requires a valid email address and display name. Returns the created user with a generated ID."
+      operationId: createUser
+      tags:
+        - Users
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        description: "The user details for account creation."
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+            example:
+              email: "jane@example.com"
+              name: "Jane Doe"
+              phone: "+1-555-0100"
+      responses:
+        "201":
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Invalid request body
+        "409":
+          description: Email already exists
+  /orders:
+    get:
+      summary: List orders
+      description: "Returns a paginated list of all orders for the authenticated account. Orders are sorted by creation date in descending order."
+      operationId: listOrders
+      tags:
+        - Orders
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Orders list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+        "401":
+          description: Unauthorized
+    post:
+      summary: Create order
+      description: "Creates a new order with the specified line items. The order total is calculated server-side from item prices and quantities."
+      operationId: createOrder
+      tags:
+        - Orders
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        description: "The order details including user ID and line items."
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderRequest"
+            example:
+              user_id: "usr_abc123"
+              items:
+                - product_id: "prod_001"
+                  quantity: 2
+                  price: 29.99
+      responses:
+        "201":
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          description: Invalid order data
+  /orders/{id}:
+    get:
+      summary: Get order by ID
+      description: "Retrieves a single order by its unique identifier, including all line items, payment status, and shipping information."
+      operationId: getOrder
+      tags:
+        - Orders
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "The unique identifier of the order."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Order found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "404":
+          description: Order not found
+  /payments/charge:
+    post:
+      summary: Charge payment
+      description: "Processes a payment charge for the specified order. Supports credit card and bank transfer payment methods. Returns a transaction ID on success."
+      operationId: chargePayment
+      tags:
+        - Payments
+      security:
+        - bearerAuth: []
+        - oauth2: [payments:write]
+      requestBody:
+        required: true
+        description: "The payment charge details including order ID, amount, and currency."
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChargeRequest"
+            example:
+              order_id: "ord_xyz789"
+              amount: 59.98
+              currency: "USD"
+      responses:
+        "200":
+          description: Payment processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentResult"
+        "402":
+          description: Payment declined
+        "422":
+          description: Invalid payment data
+  /payments/refund:
+    post:
+      summary: Refund payment
+      description: "Initiates a refund for a previously completed transaction. Partial refunds are supported by specifying an amount less than the original charge."
+      operationId: refundPayment
+      tags:
+        - Payments
+      deprecated: true
+      x-deprecated-date: "2025-12-01"
+      x-sunset-date: "2026-04-01"
+      x-deprecated-replacement: "POST /payments/v2/refund"
+      security:
+        - bearerAuth: []
+        - oauth2: [payments:write]
+      requestBody:
+        required: true
+        description: "The refund request details."
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefundRequest"
+      responses:
+        "200":
+          description: Refund processed
+        "404":
+          description: Transaction not found
+  /webhooks/subscribe:
+    post:
+      summary: Subscribe to webhooks
+      description: "Registers a webhook endpoint to receive real-time notifications for specified event types. Supports order, payment, and user events."
+      operationId: subscribeWebhook
+      tags:
+        - Webhooks
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        description: "The webhook subscription details including callback URL and event types."
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - url
+                - events
+              properties:
+                url:
+                  type: string
+                  description: "The HTTPS callback URL to receive webhook payloads."
+                events:
+                  type: array
+                  description: "List of event types to subscribe to."
+                  items:
+                    type: string
+      responses:
+        "201":
+          description: Webhook subscription created
+        "400":
+          description: Invalid webhook URL or events
+  /internal/health:
+    get:
+      summary: Health check
+      description: "Returns the current health status of the API. Used for monitoring and load balancer health checks."
+      operationId: healthCheck
+      tags:
+        - Internal
+      responses:
+        "200":
+          description: Service is healthy
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "JWT bearer token for API authentication."
+    oauth2:
+      type: oauth2
+      description: "OAuth 2.0 authorization for sensitive operations."
+      flows:
+        authorizationCode:
+          authorizationUrl: https://auth.acme.example.com/authorize
+          tokenUrl: https://auth.acme.example.com/token
+          scopes:
+            payments:write: "Create and manage payments"
+            payments:read: "View payment history"
+            users:admin: "Manage user accounts"
+  schemas:
+    User:
+      type: object
+      description: "Represents a user account in the Acme platform."
+      required:
+        - id
+        - email
+        - name
+      properties:
+        id:
+          type: string
+          description: "Unique user identifier."
+        email:
+          type: string
+          description: "User's email address."
+        name:
+          type: string
+          description: "User's display name."
+        phone:
+          type: string
+          nullable: true
+          description: "User's phone number in E.164 format."
+        created_at:
+          type: string
+          format: date-time
+          description: "Timestamp when the account was created."
+        timezone:
+          type: string
+          nullable: true
+          description: "User's IANA timezone, e.g. America/New_York. Optional."
+    CreateUserRequest:
+      type: object
+      description: "Request body for creating a new user account."
+      required:
+        - email
+        - name
+      properties:
+        email:
+          type: string
+          description: "Email address for the new account."
+        name:
+          type: string
+          description: "Display name for the new account."
+        phone:
+          type: string
+          description: "Optional phone number."
+    Order:
+      type: object
+      description: "Represents a customer order with line items and status."
+      required:
+        - id
+        - user_id
+        - total
+        - status
+      properties:
+        id:
+          type: string
+          description: "Unique order identifier."
+        user_id:
+          type: string
+          description: "ID of the user who placed the order."
+        total:
+          type: number
+          description: "Order total in the specified currency."
+        currency:
+          type: string
+          default: "USD"
+          description: "ISO 4217 currency code."
+        status:
+          type: string
+          enum: [pending, confirmed, shipped, delivered]
+          description: "Current order fulfillment status."
+        items:
+          type: array
+          description: "Line items in the order."
+          items:
+            $ref: "#/components/schemas/OrderItem"
+    OrderItem:
+      type: object
+      description: "A single line item in an order."
+      required:
+        - product_id
+        - quantity
+        - price
+      properties:
+        product_id:
+          type: string
+          description: "Product identifier."
+        quantity:
+          type: integer
+          description: "Number of units ordered."
+        price:
+          type: number
+          description: "Unit price at time of order."
+    CreateOrderRequest:
+      type: object
+      description: "Request body for creating a new order."
+      required:
+        - user_id
+        - items
+      properties:
+        user_id:
+          type: string
+          description: "ID of the user placing the order."
+        items:
+          type: array
+          description: "Line items to include in the order."
+          items:
+            $ref: "#/components/schemas/OrderItem"
+    ChargeRequest:
+      type: object
+      description: "Request body for processing a payment charge."
+      required:
+        - order_id
+        - amount
+        - currency
+      properties:
+        order_id:
+          type: string
+          description: "ID of the order to charge."
+        amount:
+          type: number
+          description: "Amount to charge in the specified currency."
+        currency:
+          type: string
+          description: "ISO 4217 currency code."
+    PaymentResult:
+      type: object
+      description: "Result of a payment processing operation."
+      required:
+        - transaction_id
+        - status
+      properties:
+        transaction_id:
+          type: string
+          description: "Unique transaction identifier."
+        status:
+          type: string
+          description: "Payment status (success, declined, pending)."
+    TokenResponse:
+      type: object
+      description: "OAuth2 token response returned by the /auth/token endpoint."
+      required:
+        - access_token
+        - token_type
+        - expires_in
+      properties:
+        access_token:
+          type: string
+          description: "Bearer access token for API authentication."
+        refresh_token:
+          type: string
+          description: "Refresh token for obtaining new access tokens without re-authentication."
+        token_type:
+          type: string
+          default: "Bearer"
+          description: "Token type (always Bearer)."
+        expires_in:
+          type: integer
+          default: 3600
+          description: "Token lifetime in seconds."
+    RefundRequest:
+      type: object
+      description: "Request body for initiating a payment refund."
+      required:
+        - transaction_id
+        - reason
+      properties:
+        transaction_id:
+          type: string
+          description: "ID of the original transaction to refund."
+        reason:
+          type: string
+          description: "Reason for the refund request."
+        amount:
+          type: number
+          description: "Partial refund amount. Omit for full refund."

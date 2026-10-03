@@ -18,7 +18,7 @@ const { runGate } = require('../src/index');
 const { artifactDigestOf } = require('../src/receipt-trailer');
 const { newSigner, mintV4, tamperSignature, writeKeyringFile, envelope } = require('./mint');
 
-const DEMO_SPEC = path.join(__dirname, '..', '..', 'coderifts-demo', 'api', 'openapi.yaml');
+const DEMO_SPEC = path.join(__dirname, 'fixtures', 'demo-openapi.yaml');
 const PHONE = [
   '        phone:',
   '          type: string',
