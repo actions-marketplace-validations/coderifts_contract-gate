@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.3 — 2026-10-06
+- **An MCP client configuration is never read or sent (P65).** `mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`,
+  `mcp_settings.json`, `cline_mcp_settings.json`, `.mcp.json`, `claude_desktop_config.json` are not contract artifacts:
+  `classify()` refuses @coderifts/contract-path's MCP_CLIENT_CONFIG first, so the file is not read from git and not
+  sent to preflight. The vendored classifier mirrors the package's pattern character for character.
+
 ## Unreleased (after v0.11.0) — docs, example and tests
 
 - **The reader's context is one string, carried by the measured-enforcing shape.** The example
