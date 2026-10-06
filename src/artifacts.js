@@ -28,7 +28,13 @@ const CLASSIFIERS = [
   { type: 'mcp_manifest', re: /(^|\/)(mcp[^/]*\.json|tools?-catalog\.json|mcp-manifest\.json)$/i },
 ];
 
+// P65 (2026-10-06): an MCP client configuration (`mcp.json`, `.cursor/mcp.json`, `mcp_settings.json` …,
+// with the servers' env credentials) is never a contract artifact — the pattern of @coderifts/contract-path,
+// mirrored in ./contract-path.js (drift-tested). Checked first, by name, so the file is never read from git.
+const { MCP_CLIENT_CONFIG } = require('./contract-path.js');
+
 function classify(path) {
+  if (MCP_CLIENT_CONFIG.test(String(path || '').toLowerCase())) return null;
   for (const c of CLASSIFIERS) {
     if (c.re.test(path)) return c.type;
   }

@@ -16,6 +16,8 @@ const CORPUS = [
   'openapi.yaml', 'openapi.yml', 'api/openapi.json', 'swagger.json', 'docs/swagger-v2.yaml',
   'asyncapi.yaml', 'events/asyncapi.json', 'schema.graphql', 'schema.gql', 'proto/user.proto',
   'mcp.json', 'tools-catalog.json', 'mcp-manifest.json',
+  // P65: the MCP client configuration names, which both copies must refuse alike
+  '.mcp.json', '.cursor/mcp.json', '.vscode/mcp.json', 'claude_desktop_config.json', 'cline_mcp_settings.json', 'mcp/tools.json',
   'package.json', 'tsconfig.json', 'package-lock.json', '.github/workflows/ci.yml',
   'README.md', 'src/index.js', 'node_modules/x/openapi.yaml', 'vendor/openapi.yaml',
   'openapi', 'a/b/c/openapi.yaml', 'OPENAPI.YAML', 'deep/nested/mcp/servers.json',
@@ -41,4 +43,9 @@ test('the honest edges hold: build files are not contracts, vendored paths are e
   }
   assert.equal(mine.looksLikeContractPath('node_modules/x/openapi.yaml'), false);
   assert.equal(mine.looksLikeContractPath('vendor/openapi.yaml'), false);
+});
+
+test('MIRROR: the MCP client configuration pattern is the package\'s, character for character', (t) => {
+  if (!real) return t.skip('coderifts-app/packages/contract-path not present — mirror UNVERIFIED');
+  assert.equal(String(mine.MCP_CLIENT_CONFIG), String(real.MCP_CLIENT_CONFIG));
 });

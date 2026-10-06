@@ -85,7 +85,9 @@ test('classify maps the contract families', () => {
   assert.equal(classify('schema.graphql'), 'graphql');
   assert.equal(classify('proto/user.proto'), 'grpc');
   assert.equal(classify('asyncapi.yaml'), 'asyncapi');
-  assert.equal(classify('mcp.json'), 'mcp_manifest');
+  // P65: an MCP client configuration is not a contract; a tool manifest is.
+  assert.equal(classify('mcp.json'), null);
+  assert.equal(classify('mcp-manifest.json'), 'mcp_manifest');
   assert.equal(classify('src/util.ts'), null);
   assert.equal(classify('README.md'), null);
 });
