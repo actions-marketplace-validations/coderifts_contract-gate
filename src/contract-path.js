@@ -16,10 +16,15 @@
 'use strict';
 
 const CONTRACT_EXT = /\.(ya?ml|json|graphql|gql|proto)$/i;
+// P65 (2026-10-06): @coderifts/contract-path 1.2.0's MCP_CLIENT_CONFIG (from its contract-write), mirrored
+// like the rest of this file: an MCP client configuration is never a contract, by name. The mirror test
+// classifies the client-config names through both copies, so a drift fails the suite.
+const MCP_CLIENT_CONFIG = /(^|\/)(\.?mcp\.json|claude_desktop_config\.json|(cline_)?mcp_settings\.json)$/i;
 
 function looksLikeContractPath(p) {
   const s = String(p || '').toLowerCase();
   if (s.includes('node_modules/') || s.includes('vendor/')) return false;
+  if (MCP_CLIENT_CONFIG.test(s)) return false;
   return CONTRACT_EXT.test(s) && (s.includes('openapi') || s.includes('swagger') || s.includes('asyncapi')
     || s.endsWith('.graphql') || s.endsWith('.gql') || s.endsWith('.proto') || s.includes('mcp'));
 }
@@ -33,4 +38,4 @@ function typeForPath(p) {
   return 'openapi';
 }
 
-module.exports = { CONTRACT_EXT, looksLikeContractPath, typeForPath };
+module.exports = { CONTRACT_EXT, MCP_CLIENT_CONFIG, looksLikeContractPath, typeForPath };
