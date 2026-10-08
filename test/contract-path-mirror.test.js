@@ -15,7 +15,7 @@ try { real = require(REAL); } catch { /* reported by the skip below, never silen
 const CORPUS = [
   'openapi.yaml', 'openapi.yml', 'api/openapi.json', 'swagger.json', 'docs/swagger-v2.yaml',
   'asyncapi.yaml', 'events/asyncapi.json', 'schema.graphql', 'schema.gql', 'proto/user.proto',
-  'mcp.json', 'tools-catalog.json', 'mcp-manifest.json',
+  'mcp.json', '.well-known/mcp.json', 'config/mcp.json', 'tools-catalog.json', 'mcp-manifest.json',
   // P65: the MCP client configuration names, which both copies must refuse alike
   '.mcp.json', '.cursor/mcp.json', '.vscode/mcp.json', 'claude_desktop_config.json', 'cline_mcp_settings.json', 'mcp/tools.json',
   'package.json', 'tsconfig.json', 'package-lock.json', '.github/workflows/ci.yml',
@@ -48,4 +48,24 @@ test('the honest edges hold: build files are not contracts, vendored paths are e
 test('MIRROR: the MCP client configuration pattern is the package\'s, character for character', (t) => {
   if (!real) return t.skip('coderifts-app/packages/contract-path not present — mirror UNVERIFIED');
   assert.equal(String(mine.MCP_CLIENT_CONFIG), String(real.MCP_CLIENT_CONFIG));
+  assert.equal(String(mine.MCP_JSON_BY_CONTENT), String(real.MCP_JSON_BY_CONTENT));
+});
+
+test('MIRROR (P65c): the content decision answers as the package does on a corpus', (t) => {
+  if (!real) return t.skip('coderifts-app/packages/contract-path not present — mirror UNVERIFIED');
+  const texts = [
+    JSON.stringify({ mcpServers: { a: { command: 'x', env: { T: '1' } } } }),
+    JSON.stringify({ servers: { a: { type: 'stdio' } } }),
+    JSON.stringify({ tools: [{ name: 'a' }] }),
+    JSON.stringify({ mcpServers: {}, tools: [] }),
+    JSON.stringify({ servers: [{ url: 'x' }] }),
+    JSON.stringify({ mcpServers: 'x' }),
+    '\uFEFF{"mcpServers":{}}', '{ broken', '[]', '{}', 'null', '', '{"mcpServers":{} // c\n}',
+  ];
+  const paths = ['mcp.json', '.well-known/mcp.json', 'a/./b/../mcp.json', '.mcp.json', '.cursor/mcp.json', '.vscode/mcp.json',
+    'mcp-tool-manifest.json', 'mcp/tools.json', 'x\\mcp.json'];
+  for (const text of texts) {
+    assert.equal(mine.mcpJsonKind(text), real.mcpJsonKind(text), `mcpJsonKind(${JSON.stringify(text)})`);
+    for (const p of paths) assert.equal(mine.isClientConfigContent(p, text), real.isClientConfigContent(p, text), `isClientConfigContent(${p}, ${JSON.stringify(text)})`);
+  }
 });

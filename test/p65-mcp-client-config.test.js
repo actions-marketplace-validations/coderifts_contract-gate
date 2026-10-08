@@ -13,7 +13,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { deriveArtifactsFromDiff, classify } = require('../src/artifacts');
 
-const CLIENT_CONFIGS = ['mcp.json', '.cursor/mcp.json', '.vscode/mcp.json', 'mcp_settings.json', 'cline_mcp_settings.json', '.mcp.json', 'claude_desktop_config.json'];
+// P65c (2026-10-07): a plain `mcp.json` left this by-name list (test/p65c-mcp-json-by-content.test.js decides it).
+const CLIENT_CONFIGS = ['.cursor/mcp.json', '.vscode/mcp.json', 'mcp_settings.json', 'cline_mcp_settings.json', '.mcp.json', 'claude_desktop_config.json'];
 
 test('classify: an MCP client configuration is not a contract artifact', () => {
   for (const p of CLIENT_CONFIGS) assert.equal(classify(p), null, p);

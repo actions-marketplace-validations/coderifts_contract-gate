@@ -28,10 +28,12 @@ const CLASSIFIERS = [
   { type: 'mcp_manifest', re: /(^|\/)(mcp[^/]*\.json|tools?-catalog\.json|mcp-manifest\.json)$/i },
 ];
 
-// P65 (2026-10-06): an MCP client configuration (`mcp.json`, `.cursor/mcp.json`, `mcp_settings.json` …,
+// P65 (2026-10-06): an MCP client configuration (`.mcp.json`, `.cursor/mcp.json`, `mcp_settings.json` …,
 // with the servers' env credentials) is never a contract artifact — the pattern of @coderifts/contract-path,
 // mirrored in ./contract-path.js (drift-tested). Checked first, by name, so the file is never read from git.
-const { MCP_CLIENT_CONFIG } = require('./contract-path.js');
+// P65c (2026-10-07): a plain `mcp.json` is also a server's tool-manifest name, so it is read and decided by
+// content (isClientConfigContent): a side that is a client configuration counts as no file, never sent.
+const { MCP_CLIENT_CONFIG, isClientConfigContent } = require('./contract-path.js');
 
 function classify(path) {
   if (MCP_CLIENT_CONFIG.test(String(path || '').toLowerCase())) return null;
@@ -159,11 +161,17 @@ function deriveArtifactsFromDiff({ baseRef, headRef, cwd = process.cwd(), gitImp
   for (const path of allChanged) {
     const type = classify(path);
     if (!type) continue;
-    changedContractFiles.push(path);
 
     // Three-state reads: null = absent, string = present, throw = unreadable (not flattened to '').
-    const beforeRaw = blobAtSide(baseRef, path, cwd, gitImpl, 'before');
-    const afterRaw = blobAtSide(headRef, path, cwd, gitImpl, 'after');
+    // P65c: a present side that is an MCP client configuration is absent (its text is never sent).
+    const asContract = (raw) => (raw !== null && isClientConfigContent(path, raw) ? { raw: null, client: true } : { raw, client: false });
+    const b = asContract(blobAtSide(baseRef, path, cwd, gitImpl, 'before'));
+    const a = asContract(blobAtSide(headRef, path, cwd, gitImpl, 'after'));
+    // Only a client configuration (or nothing) on both sides: not a contract file in this PR.
+    if ((b.client || a.client) && b.raw === null && a.raw === null) continue;
+    changedContractFiles.push(path);
+    const beforeRaw = b.raw;
+    const afterRaw = a.raw;
 
     // Preflight / NEW_ARTIFACT convention: absent maps to empty string for the wire shape only.
     // Unreadable never reaches here (thrown above).

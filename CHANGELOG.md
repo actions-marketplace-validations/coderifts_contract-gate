@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased (after v0.11.3) — P65c
+- **A plain `mcp.json` is decided by its content (P65c).** v0.11.3 refused every `mcp.json` by name, and that is
+  also the name a server's tool manifest carries (coderifts.com's own): a PR that removed a tool from one passed
+  `no_contract_changes`. By name the Action now refuses only `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`,
+  `claude_desktop_config.json` and `(cline_)mcp_settings.json` (never read). Any other `mcp.json` is read with
+  `git show` and decided as @coderifts/contract-path 1.3.0 decides it: `mcpServers` / `servers` and no `tools` →
+  an MCP client configuration, counted as no file and never sent; `tools`, any other shape, or text that does not
+  parse → a contract (fail-closed). A manifest turned into a client configuration is the manifest removed. The
+  vendored copy is held to the package on a corpus by the mirror test.
+
 ## 0.11.3 — 2026-10-06
 - **An MCP client configuration is never read or sent (P65).** `mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`,
   `mcp_settings.json`, `cline_mcp_settings.json`, `.mcp.json`, `claude_desktop_config.json` are not contract artifacts:

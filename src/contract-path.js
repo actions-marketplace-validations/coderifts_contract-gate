@@ -1,5 +1,5 @@
 /**
- * VENDORED MIRROR of @coderifts/contract-path@1.0.0 (coderifts-app/packages/contract-path).
+ * VENDORED MIRROR of @coderifts/contract-path@1.3.0 (coderifts-app/packages/contract-path).
  *
  * That package's own header says: "Gate-path contract-file classifier (single list) … Do not
  * invent a second glob/list." This file is NOT a second list — it is a byte-faithful copy of the
@@ -19,7 +19,45 @@ const CONTRACT_EXT = /\.(ya?ml|json|graphql|gql|proto)$/i;
 // P65 (2026-10-06): @coderifts/contract-path 1.2.0's MCP_CLIENT_CONFIG (from its contract-write), mirrored
 // like the rest of this file: an MCP client configuration is never a contract, by name. The mirror test
 // classifies the client-config names through both copies, so a drift fails the suite.
-const MCP_CLIENT_CONFIG = /(^|\/)(\.?mcp\.json|claude_desktop_config\.json|(cline_)?mcp_settings\.json)$/i;
+// P65c (2026-10-07, 1.3.0): by name only the names that are a client configuration and nothing else; a
+// plain `mcp.json` is a candidate, decided by content after the read (isClientConfigContent below,
+// mirrored from the package's contract-write and held to it on a corpus by the mirror test).
+const MCP_CLIENT_CONFIG = /(^|\/)(\.mcp\.json|\.cursor\/mcp\.json|\.vscode\/mcp\.json|claude_desktop_config\.json|(cline_)?mcp_settings\.json)$/i;
+const MCP_JSON_BY_CONTENT = /(^|\/)mcp\.json$/i;
+
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/** 'client_config' for a JSON object with mcpServers/servers (an object) and no tools; else 'contract'. */
+function mcpJsonKind(text) {
+  let doc;
+  try {
+    doc = JSON.parse(String(text == null ? '' : text).replace(/^\uFEFF/, ''));
+  } catch {
+    return 'contract';
+  }
+  if (!isObject(doc) || 'tools' in doc) return 'contract';
+  return isObject(doc.mcpServers) || isObject(doc.servers) ? 'client_config' : 'contract';
+}
+
+/** contract-write's normalizePath: `a/./b/../c` → `a/c`, backslashes → slashes, no leading `./`. */
+function normalizePath(p) {
+  const s = String(p || '').replace(/\\/g, '/');
+  const abs = s.startsWith('/');
+  const out = [];
+  for (const seg of s.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..' && out.length && out[out.length - 1] !== '..') out.pop();
+    else if (seg !== '..' || !abs) out.push(seg);
+  }
+  return (abs ? '/' : '') + out.join('/');
+}
+
+/** True when `path` is decided by content and `text` (one present side) is an MCP client configuration. */
+function isClientConfigContent(path, text) {
+  if (typeof text !== 'string' || text === '') return false;
+  const rel = normalizePath(path);
+  return MCP_JSON_BY_CONTENT.test(rel) && !MCP_CLIENT_CONFIG.test(rel) && mcpJsonKind(text) === 'client_config';
+}
 
 function looksLikeContractPath(p) {
   const s = String(p || '').toLowerCase();
@@ -38,4 +76,6 @@ function typeForPath(p) {
   return 'openapi';
 }
 
-module.exports = { CONTRACT_EXT, MCP_CLIENT_CONFIG, looksLikeContractPath, typeForPath };
+module.exports = {
+  CONTRACT_EXT, MCP_CLIENT_CONFIG, MCP_JSON_BY_CONTENT, mcpJsonKind, isClientConfigContent, looksLikeContractPath, typeForPath,
+};
