@@ -10,8 +10,8 @@ test('classifies contract artifacts and types them via the single classifier', (
     { path: 'proto/user.proto', after: 'c' },
     { path: 'events/asyncapi.json', after: 'd' },
     { path: 'mcp-manifest.json', after: 'e' },
-    // P65: an MCP client configuration is not a contract (MCP_CLIENT_CONFIG)
-    { path: 'mcp.json', after: 'f' },
+    // P65: an MCP client configuration is not a contract (MCP_CLIENT_CONFIG, by name)
+    { path: '.mcp.json', after: 'f' },
   ] });
   // sorted by path: api/openapi.yaml, events/asyncapi.json, mcp-manifest.json, proto/user.proto, schema.graphql
   assert.deepEqual(g.map((x) => x.id), [
