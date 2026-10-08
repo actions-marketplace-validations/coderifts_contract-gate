@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (after v0.11.3) — P65c
+## 0.11.4 — 2026-10-08
 - **A plain `mcp.json` is decided by its content (P65c).** v0.11.3 refused every `mcp.json` by name, and that is
   also the name a server's tool manifest carries (coderifts.com's own): a PR that removed a tool from one passed
   `no_contract_changes`. By name the Action now refuses only `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`,
