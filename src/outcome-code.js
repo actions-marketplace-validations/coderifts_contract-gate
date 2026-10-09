@@ -44,12 +44,20 @@ const OUTCOME_CODE = Object.freeze({
    * be the thing that cannot be bypassed by the person being checked.
    */
   EXPLICIT_SKIP_NOT_ALLOWED: 'EXPLICIT_SKIP_NOT_ALLOWED',
+
+  /**
+   * FAILURE (P65d). A changed plain mcp.json is both an MCP client configuration and a tool manifest, or does
+   * not parse. It is not read or sent, and the run does not pass it as "no contract": the one sentence says
+   * what to change so it can be checked.
+   */
+  MCP_JSON_HELD: 'MCP_JSON_HELD',
 });
 
 /** Conclusion each code maps to. A code with no conclusion here is a code nobody wired up. */
 const OUTCOME_CONCLUSION = Object.freeze({
   [OUTCOME_CODE.NO_CONTRACT_CHANGE]: 'success',
   [OUTCOME_CODE.EXPLICIT_SKIP_NOT_ALLOWED]: 'failure',
+  [OUTCOME_CODE.MCP_JSON_HELD]: 'failure',
 });
 
 /**

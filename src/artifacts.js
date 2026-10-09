@@ -33,7 +33,7 @@ const CLASSIFIERS = [
 // mirrored in ./contract-path.js (drift-tested). Checked first, by name, so the file is never read from git.
 // P65c (2026-10-07): a plain `mcp.json` is also a server's tool-manifest name, so it is read and decided by
 // content (isClientConfigContent): a side that is a client configuration counts as no file, never sent.
-const { MCP_CLIENT_CONFIG, isClientConfigContent } = require('./contract-path.js');
+const { MCP_CLIENT_CONFIG, isClientConfigContent, mcpJsonContentKind, heldWhy } = require('./contract-path.js');
 
 function classify(path) {
   if (MCP_CLIENT_CONFIG.test(String(path || '').toLowerCase())) return null;
@@ -146,7 +146,7 @@ function blobAtSide(ref, path, cwd, gitImpl, side) {
  * @param {string} o.headRef   head commit/ref (PR source — the ACTUAL merge candidate)
  * @param {string} [o.cwd]     repo working directory
  * @param {(args:string[],cwd:string)=>string} [o.gitImpl]  injectable git (tests)
- * @returns {{ artifacts: Array<{id,type,before,after}>, changedContractFiles: string[], allChanged: string[] }}
+ * @returns {{ artifacts: Array<{id,type,before,after}>, changedContractFiles: string[], allChanged: string[], held: Array<{path,kind,why}> }}
  * @throws {Error} code ARTIFACT_UNREADABLE when a blob cannot be read (fail closed — no fabricated '')
  */
 function deriveArtifactsFromDiff({ baseRef, headRef, cwd = process.cwd(), gitImpl = defaultGit }) {
@@ -158,6 +158,9 @@ function deriveArtifactsFromDiff({ baseRef, headRef, cwd = process.cwd(), gitImp
 
   const artifacts = [];
   const changedContractFiles = [];
+  // P65d: a plain mcp.json side that is 'mixed' or 'unparseable' — never sent, and not "no file": runGate
+  // decides red with its sentence before anything is sent.
+  const held = [];
   for (const path of allChanged) {
     const type = classify(path);
     if (!type) continue;
@@ -165,8 +168,15 @@ function deriveArtifactsFromDiff({ baseRef, headRef, cwd = process.cwd(), gitImp
     // Three-state reads: null = absent, string = present, throw = unreadable (not flattened to '').
     // P65c: a present side that is an MCP client configuration is absent (its text is never sent).
     const asContract = (raw) => (raw !== null && isClientConfigContent(path, raw) ? { raw: null, client: true } : { raw, client: false });
-    const b = asContract(blobAtSide(baseRef, path, cwd, gitImpl, 'before'));
-    const a = asContract(blobAtSide(headRef, path, cwd, gitImpl, 'after'));
+    const rawBefore = blobAtSide(baseRef, path, cwd, gitImpl, 'before');
+    const rawAfter = blobAtSide(headRef, path, cwd, gitImpl, 'after');
+    const heldKind = [rawBefore, rawAfter].map((t) => (t === null ? null : mcpJsonContentKind(path, t))).find((k) => k === 'mixed' || k === 'unparseable');
+    if (heldKind) {
+      held.push({ path, kind: heldKind, why: heldWhy(path, heldKind) });
+      continue;
+    }
+    const b = asContract(rawBefore);
+    const a = asContract(rawAfter);
     // Only a client configuration (or nothing) on both sides: not a contract file in this PR.
     if ((b.client || a.client) && b.raw === null && a.raw === null) continue;
     changedContractFiles.push(path);
@@ -183,7 +193,7 @@ function deriveArtifactsFromDiff({ baseRef, headRef, cwd = process.cwd(), gitImp
     if (before === after) continue;
     artifacts.push({ id: path, type, before, after });
   }
-  return { artifacts, changedContractFiles, allChanged };
+  return { artifacts, changedContractFiles, allChanged, held };
 }
 
 module.exports = {

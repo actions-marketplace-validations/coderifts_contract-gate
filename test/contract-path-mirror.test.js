@@ -51,6 +51,21 @@ test('MIRROR: the MCP client configuration pattern is the package\'s, character 
   assert.equal(String(mine.MCP_JSON_BY_CONTENT), String(real.MCP_JSON_BY_CONTENT));
 });
 
+test('MIRROR (P65d): the shared vectors — kind, held, never-sent and the sentence answer as the package does', (t) => {
+  if (!real) return t.skip('coderifts-app/packages/contract-path not present — mirror UNVERIFIED');
+  const vectorsFile = path.join(process.env.HOME, 'coderifts-app', 'packages', 'contract-path', 'test', 'fixtures', 'mcp-json-vectors.json');
+  const { vectors } = require(vectorsFile);
+  for (const v of vectors) {
+    for (const p of ['mcp.json', 'a/mcp.json', '.mcp.json', 'mcp-tool-manifest.json']) {
+      assert.equal(mine.mcpJsonContentKind(p, v.text), real.mcpJsonContentKind(p, v.text), `mcpJsonContentKind(${p}, ${v.id})`);
+      assert.equal(mine.isHeldContent(p, v.text), real.isHeldContent(p, v.text), `isHeldContent(${p}, ${v.id})`);
+      assert.equal(mine.isNeverSent(p, v.text), real.isNeverSent(p, v.text), `isNeverSent(${p}, ${v.id})`);
+    }
+    assert.equal(mine.mcpJsonKind(v.text), v.kind, v.id);
+  }
+  for (const k of ['mixed', 'unparseable', 'contract', 'client_config']) assert.equal(mine.heldWhy('x/mcp.json', k), real.heldWhy('x/mcp.json', k), k);
+});
+
 test('MIRROR (P65c): the content decision answers as the package does on a corpus', (t) => {
   if (!real) return t.skip('coderifts-app/packages/contract-path not present — mirror UNVERIFIED');
   const texts = [
