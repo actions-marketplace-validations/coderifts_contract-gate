@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (after v0.11.4) — P65d
+## 0.11.5 — 2026-10-09
 - **A plain `mcp.json` that is both an MCP client configuration and a tool manifest, or that does not parse, is not
   read or sent, and the run fails with one sentence (outcome `MCP_JSON_HELD`).** It is not a contract artifact and
   not "no contract change": split the server list and the tool manifest into separate files, or make the file valid
