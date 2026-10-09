@@ -231,7 +231,25 @@ async function runGate({
     }
 
     // 1. artifacts from the REAL diff — the anti-bypass invariant.
-    const { artifacts, changedContractFiles } = deriveArtifactsFromDiff({ baseRef: baseSha, headRef: headSha, cwd, gitImpl });
+    const { artifacts, changedContractFiles, held } = deriveArtifactsFromDiff({ baseRef: baseSha, headRef: headSha, cwd, gitImpl });
+
+    // P65d: a held plain mcp.json decides the run red before anything is sent (and it is never "no change").
+    if (held && held.length) {
+      const summary = [
+        '❌ **CodeRifts contract-gate: FAIL**', '',
+        '- reason: `mcp_json_held`',
+        `- outcome: \`${OUTCOME_CODE.MCP_JSON_HELD}\``,
+        `- head commit: \`${headSha}\``, '',
+        ...held.map((h) => h.why),
+      ].join('\n');
+      await emitCheck(OUTCOME_CONCLUSION[OUTCOME_CODE.MCP_JSON_HELD], `Not checked: ${held[0].path}`, summary);
+      return {
+        exitCode: 1,
+        gate: { pass: false, reason: 'mcp_json_held', held },
+        outcomeCode: OUTCOME_CODE.MCP_JSON_HELD,
+        artifactCount: 0,
+      };
+    }
 
     if (artifacts.length === 0) {
       const summary = [

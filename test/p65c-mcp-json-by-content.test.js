@@ -77,11 +77,11 @@ test('a manifest turned into a client configuration: the manifest removed, the c
   assert.ok(!JSON.stringify(out).includes(TOKEN));
 });
 
-test('unparseable: a contract (fail-closed)', () => {
+test('unparseable: not sent, and held (P65d; v0.11.4 sent it as a contract)', () => {
   const g = git({ 'base:mcp.json': tools(['a']), 'head:mcp.json': '{ broken' }, ['mcp.json']);
   const out = deriveArtifactsFromDiff({ baseRef: 'base', headRef: 'head', gitImpl: g.impl });
-  assert.equal(out.artifacts.length, 1);
-  assert.equal(out.artifacts[0].after, '{ broken');
+  assert.equal(out.artifacts.length, 0);
+  assert.deepEqual(out.held.map((h) => [h.path, h.kind]), [['mcp.json', 'unparseable']]);
 });
 
 test('the by-name client configurations are still never read from git', () => {

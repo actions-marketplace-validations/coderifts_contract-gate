@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (after v0.11.4) — P65d
+- **A plain `mcp.json` that is both an MCP client configuration and a tool manifest, or that does not parse, is not
+  read or sent, and the run fails with one sentence (outcome `MCP_JSON_HELD`).** It is not a contract artifact and
+  not "no contract change": split the server list and the tool manifest into separate files, or make the file valid
+  JSON (no comments) to have it checked. The vendored classifier mirrors @coderifts/contract-path 1.3.1; the mirror
+  test holds it to the package on the shared vectors.
+
 ## 0.11.4 — 2026-10-08
 - **A plain `mcp.json` is decided by its content (P65c).** v0.11.3 refused every `mcp.json` by name, and that is
   also the name a server's tool manifest carries (coderifts.com's own): a PR that removed a tool from one passed
