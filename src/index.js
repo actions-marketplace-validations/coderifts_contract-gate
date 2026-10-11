@@ -33,6 +33,7 @@ const { selectGrantForHead } = require('./grant-delivery');
 const { OUTCOME_CODE, OUTCOME_CONCLUSION } = require('./outcome-code');
 const { detectExplicitSkip, commitMessagesInRange } = require('./explicit-skip');
 const { checkReceiptTrailer, judgeReceipt } = require('./receipt-trailer');
+const { summarizeControlPlane } = require('./control-plane');
 const { receiptDigest } = require('./monitoring-attestation');
 const { writeDecisionPredicate } = require('./decision-predicate');
 
@@ -73,6 +74,7 @@ function writeRunSurface({ conclusion, title, summary, surface }) {
       `target_id: ${s.targetId || 'n/a'}`,
       `expires_at: ${s.expiresAt || 'n/a'}`,
       `reason: ${s.reason || 'n/a'}`,
+      ...(s.controlPlaneFiles ? [`control-plane: ${s.controlPlaneFiles}`] : []),
       '',
     ].join('\n');
     fs.appendFileSync(step, block);
@@ -85,6 +87,7 @@ function writeRunSurface({ conclusion, title, summary, surface }) {
       ['reason', s.reason || ''],
       ['title', title || ''],
     ];
+    if (s.controlPlaneFiles) fields.push(['control-plane-files', s.controlPlaneFiles]);
     let text = '';
     for (const [key, value] of fields) {
       const val = String(value);
@@ -217,8 +220,25 @@ async function runGate({
   // pull_request | merge_group. A PR-head receipt's base/head do not match the queue SHAs.
   eventKind = null,
 }) {
+  // Filled from the name-only diff before any check is emitted for that diff.
+  // Explicit-skip returns earlier, while this is still empty.
+  let controlPlaneMatched = [];
   const emitCheck = async (conclusion, title, summary, text = null, surface = null) => {
-    writeRunSurface({ conclusion, title, summary, surface });
+    const fileList = controlPlaneMatched.map((m) => m.path).join(',');
+    let summaryOut = summary || '';
+    let titleOut = title;
+    let surfaceOut = surface;
+    if (fileList) {
+      const listed = controlPlaneMatched.map((m) => `\`${m.path}\` (${m.class})`).join(', ');
+      const line = `- control-plane: ${listed}`;
+      if (!summaryOut.includes(line)) summaryOut = summaryOut ? `${summaryOut}\n${line}` : line;
+      const reasonNow = (surface && surface.reason) || '';
+      if (reasonNow === 'receipt_not_allow' && !String(titleOut).includes('CONTROL_PLANE_CHANGE')) {
+        titleOut = `${titleOut} · CONTROL_PLANE_CHANGE`;
+      }
+      surfaceOut = { ...(surface || {}), controlPlaneFiles: fileList };
+    }
+    writeRunSurface({ conclusion, title: titleOut, summary: summaryOut, surface: surfaceOut });
     // 1334 — DELIBERATE opt-out, distinct from "we had no token".
     //
     // MEASURED on coderifts/demo PR#4 (2026-09-03): three contract-gate check-runs on one head.
@@ -237,14 +257,15 @@ async function runGate({
     if (postCheckRun_ === false) {
       // The step summary already has reason and receipt-id. The check-run API does not
       // return it, and a STOP and a binding mismatch share this title.
-      const reason = (surface && surface.reason) || 'n/a';
-      const receiptId = (surface && surface.receiptId) || 'n/a';
-      log(`[check not posted — post-check-run:false] ${conclusion}: ${title} reason=${reason} receipt-id=${receiptId}`);
+      const reason = (surfaceOut && surfaceOut.reason) || 'n/a';
+      const receiptId = (surfaceOut && surfaceOut.receiptId) || 'n/a';
+      const cp = fileList ? ` control-plane=${fileList}` : '';
+      log(`[check not posted — post-check-run:false] ${conclusion}: ${titleOut} reason=${reason} receipt-id=${receiptId}${cp}`);
       return;
     }
-    if (!githubToken || !owner || !repo || !headSha) { log(`[check skipped] ${conclusion}: ${title}`); return; }
+    if (!githubToken || !owner || !repo || !headSha) { log(`[check skipped] ${conclusion}: ${titleOut}`); return; }
     try {
-      const r = await postCheckRunImpl({ token: githubToken, owner, repo, headSha, conclusion, title, summary, text, checkName, fetchImpl });
+      const r = await postCheckRunImpl({ token: githubToken, owner, repo, headSha, conclusion, title: titleOut, summary: summaryOut, text, checkName, fetchImpl });
       if (!r.ok) log(`[check-run] non-2xx: ${r.status}`);
     } catch (e) { log(`[check-run] error: ${e && e.message}`); }
   };
@@ -291,7 +312,11 @@ async function runGate({
     }
 
     // 1. artifacts from the REAL diff — the anti-bypass invariant.
-    const { artifacts, changedContractFiles, held } = deriveArtifactsFromDiff({ baseRef: baseSha, headRef: headSha, cwd, gitImpl });
+    // allChanged is `git diff base...head --name-only` before classify() drops
+    // non-contract paths (src/artifacts.js). Control-plane paths are taken from
+    // that list, so a workflow-only diff is not no_contract_changes.
+    const { artifacts, changedContractFiles, allChanged, held } = deriveArtifactsFromDiff({ baseRef: baseSha, headRef: headSha, cwd, gitImpl });
+    controlPlaneMatched = summarizeControlPlane(allChanged).matched;
 
     // P65d: a held plain mcp.json decides the run red before anything is sent (and it is never "no change").
     if (held && held.length) {
@@ -311,7 +336,7 @@ async function runGate({
       };
     }
 
-    if (artifacts.length === 0) {
+    if (artifacts.length === 0 && controlPlaneMatched.length === 0) {
       const summary = [
         '✅ **CodeRifts contract-gate: PASS**', '',
         '- reason: `no_contract_changes`',

@@ -225,6 +225,8 @@ The required context `CodeRifts / contract-gate` is posted by the workflow's `GI
 
 `pull_request_target` is not a trigger in `examples/contract-gate.yml`, and it is not recommended. A `pull_request_target` run has the base repository's secrets and checks out the fork's code (pwn-request).
 
+Until 0.11.7 this action concluded success on a control-plane-only change, and the merge was held by the App check alone. On 2026-10-11, coderifts/demo PR #33 changed only `.github/workflows/contract-gate.yml` (head `2ca2aca2ccbb73c13c07f1bf10ac25de9f4d31ca`, a comment). Reader check-run 114510055851 (`CodeRifts / contract-gate`, v0.11.6) succeeded: the diff had no contract artifact, so the action returned `no_contract_changes` and never read the issued receipt. The issuer failed with `REQUEST_APPROVAL · CONTROL_PLANE_CHANGE`: check-run 114510017575 completed 2026-10-11T15:50:35Z with summary "have 0"; after review 5483938946 and `/rerun` comment 6110898348, check-run 114512261388 completed 2026-10-11T16:01:42Z with summary "have 1". From 0.11.8 that diff takes the receipt path. The path list is `src/control-plane.js`, the same list as coderifts-app `src/mergegate/control-plane.js`, quoted from DECISIONS.md, "A control-plane change is never neutral (2026-10-11)".
+
 ## Releasing
 
 This Action is consumed by tag, not from a registry: a release is a `package.json` bump in its own
