@@ -485,4 +485,5 @@ function buildReceiptCheckLines({
 module.exports = {
   evaluateGate, PASSING_ACTIONS, buildSummary, remedyBlock, nextStepBlock, readNextAgentStep,
   buildCitation, citationBlock, buildReceiptCheckLines, DOES_NOT_PROVE_URL,
+  mismatchReason, boundSlot,
 };

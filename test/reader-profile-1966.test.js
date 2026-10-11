@@ -169,9 +169,9 @@ test('trailered ALLOW → success, and the network is not called', async () => {
 });
 
 test('no trailer → fallback issuance, local verify, summary carries the receipt, commit untouched', async () => {
-  const env = allowEnv(digest);
-  const token = mintV4(signer, env);
   const repo = makeRepo({ spec });
+  const env = allowEnv(digest, { repository: 'o/r', base: repo.baseSha, head: repo.headSha });
+  const token = mintV4(signer, env);
   const headBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo.dir, encoding: 'utf8' }).trim();
   const { res, check, calls } = await run(repo, {
     preflightImpl: async () => ({ chain_receipt: token, decision_result: env }),

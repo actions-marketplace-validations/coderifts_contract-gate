@@ -24,6 +24,7 @@ const crypto = require('node:crypto');
 const { receiptForCommit } = require('./receipt-from-commit');
 const { verifyReceipt } = require('./verify');
 const { verifyMonitoringAttestation, receiptDigest } = require('./monitoring-attestation');
+const { mismatchReason, boundSlot } = require('./gate');
 
 const US = '\x1f';
 const ALLOW_ACTIONS = Object.freeze(['CONTINUE']);
@@ -56,12 +57,42 @@ function artifactDigestOf(artifacts) {
  * CONTINUE_WITH_MONITORING only when the monitoring attestation verifies. The legacy caller
  * keeps the 2026-09-26 reason strings.
  */
+function carriedReceipt(carrier) {
+  return carrier === 'trailer' || carrier === 'sidecar' || carrier === 'both';
+}
+
+/**
+ * Bind the signed envelope to this run. The comparison is mismatchReason (src/gate.js):
+ * a missing side or a different string is the named failure. A trailer or sidecar
+ * skips a slot only when that slot is unbound. An issued receipt has no carrier and
+ * always compares all four slots, so a missing slot is a mismatch.
+ */
+function runBindingFailure(envelope, { repository, base, head, carrier }) {
+  const expected = { preflight_mode: 'authorize', repository, base, head };
+  const carried = carriedReceipt(carrier);
+  const slots = [
+    ['preflight_mode', 'preflight_mode', 'mode_mismatch'],
+    ['repository', 'repository', 'repo_mismatch'],
+    ['base', 'base', 'base_mismatch'],
+    ['head', 'head', 'head_mismatch'],
+  ];
+  for (const [envKey, expKey, reason] of slots) {
+    if (carried && boundSlot(envelope[envKey]) == null) continue;
+    const fail = mismatchReason(envelope, expected, envKey, expKey, reason);
+    if (fail) return fail;
+  }
+  return null;
+}
+
 function judgeReceipt({
   token, envelope, carrier = null, keyring, artifacts, now,
   profile = null,
   requireVerifiedMonitoring = false,
   monitoringAttestation = null,
   monitoringKeyring = null,
+  repository = null,
+  base = null,
+  head = null,
 }) {
   const enforcing = profile === 'enforcing';
   if (!envelope || typeof envelope !== 'object') {
@@ -96,6 +127,12 @@ function judgeReceipt({
       payload: res.payload,
       detail: `receipt covers ${signedTarget || '(none)'}, this diff is ${want}`,
     };
+  }
+  if (enforcing) {
+    const bindFail = runBindingFailure(envelope, { repository, base, head, carrier });
+    if (bindFail) {
+      return { ok: false, reason: bindFail, carrier, token, envelope, payload: res.payload };
+    }
   }
   if (enforcing && envelope.operation !== 'merge') {
     return {
@@ -149,6 +186,7 @@ function judgeReceipt({
 function checkReceiptTrailer({
   headSha, cwd, keyring, artifacts, now, findImpl = receiptForCommit,
   profile = null, requireVerifiedMonitoring = false, monitoringAttestation = null, monitoringKeyring = null,
+  repository = null, base = null, head = null,
 }) {
   let found;
   try {
@@ -163,6 +201,7 @@ function checkReceiptTrailer({
   return judgeReceipt({
     token: found.token, envelope: found.envelope, carrier: found.carrier, keyring, artifacts, now,
     profile, requireVerifiedMonitoring, monitoringAttestation, monitoringKeyring,
+    repository, base, head,
   });
 }
 

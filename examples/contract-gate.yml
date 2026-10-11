@@ -11,24 +11,39 @@
 # `CodeRifts / contract-gate` bound to 15368 — this workflow's job below.
 name: CodeRifts Contract Gate
 
-# Run on EVERY pull request to the protected branch. Do NOT add `paths:` filters — a path filter
+# Run on EVERY pull request to the protected branch. Do NOT add a path filter — a filter
 # would skip contract PRs the filter doesn't match, and a required check that never runs leaves the
 # PR mergeable with the check "pending" (see ENFORCEMENT.md, "fail-closed on absence").
 # merge_group is a different commit from the PR head. A required check that only listens to
 # pull_request is never reported on the queue, and GitHub then refuses the merge.
+# The run's SHAs on that event are merge_group.base_sha and merge_group.head_sha. A trailer
+# minted for the pull-request head names the pull-request SHAs, so base_mismatch or
+# head_mismatch falls through to issuance when require-receipt-trailer is left false.
+# With that input true, the mismatch stays a failure. repo_mismatch and mode_mismatch
+# stay failures either way.
 on:
   pull_request:
   merge_group:
 
-# Least privilege: write checks (to post the Check Run) + read the code (to derive the diff).
+# Suggested setup (post-check-run: 'false' below) does not post a check-run.
+# contents: read — actions/checkout and the local git reads (src/artifacts.js defaultGit).
+# pull-requests: read — the action does not call the pulls API. SHAs come from GITHUB_EVENT_PATH.
+# Uncomment checks: write only when this action posts its own check
+# (src/check-run.js POST /repos/{owner}/{repo}/check-runs).
 permissions:
-  checks: write
   contents: read
+  pull-requests: read
+  # checks: write
 
 jobs:
   contract-gate-action:
     name: contract-gate (Action)
     runs-on: ubuntu-latest
+    outputs:
+      receipt-id: ${{ steps.gate.outputs.receipt-id }}
+      conclusion: ${{ steps.gate.outputs.conclusion }}
+      reason: ${{ steps.gate.outputs.reason }}
+      title: ${{ steps.gate.outputs.title }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,7 +51,8 @@ jobs:
           # history (both sides of the diff) must be present locally.
           fetch-depth: 0
 
-      - uses: coderifts/contract-gate@v0
+      - id: gate
+        uses: coderifts/contract-gate@v0
         with:
           api-key: ${{ secrets.CODERIFTS_API_KEY }}
           # The job below carries the required name. If the action posted its own check under the
@@ -62,9 +78,18 @@ jobs:
       - name: the gate ran and succeeded — skipped is not success
         env:
           GATE_RESULT: ${{ needs.contract-gate-action.result }}
+          RECEIPT_ID: ${{ needs.contract-gate-action.outputs.receipt-id }}
+          CONCLUSION: ${{ needs.contract-gate-action.outputs.conclusion }}
+          REASON: ${{ needs.contract-gate-action.outputs.reason }}
+          TITLE: ${{ needs.contract-gate-action.outputs.title }}
         run: |
           echo "contract-gate-action result: $GATE_RESULT"
+          echo "receipt-id: $RECEIPT_ID"
+          echo "conclusion: $CONCLUSION"
+          echo "reason: $REASON"
+          echo "title: $TITLE"
           # success | failure | cancelled | skipped — only the first is a pass.
+          # A job check-run's output cannot be set from this step. These lines are the log.
           [ "$GATE_RESULT" = "success" ] || exit 1
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────

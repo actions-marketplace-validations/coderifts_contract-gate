@@ -52,11 +52,12 @@ inputs:
     description: >-
       enforcing (default): trailer-first reader. A head commit that already carries a
       CodeRifts-Receipt trailer and a .coderifts/receipts/<sha>.json sidecar is verified
-      offline against the pinned keyring and the run does not call preflight. A human PR
-      with no trailer is issued a receipt (preflight authorize) and that receipt is verified
-      offline the same way before a green check is posted. The receipt is written to the
-      check summary and is never committed back. require-verified-monitoring is on in this
-      profile. Any other value keeps the historical preflight path.
+      offline against the pinned keyring and the run does not call preflight. Unless
+      require-receipt-trailer is true, a head with no trailer is issued a receipt
+      (preflight authorize) and that receipt is verified offline the same way.
+      The receipt is written to the step summary and the job outputs, and is never
+      committed back. require-verified-monitoring is on in this profile. Any other
+      value keeps the historical preflight path.
     required: false
     default: 'enforcing'
   predicate-path:
@@ -69,12 +70,11 @@ inputs:
     default: 'decision-predicate.json'
   require-receipt-trailer:
     description: >-
-      When true, the head commit must carry its own receipt — a `CodeRifts-Receipt:` commit trailer
-      or a `.coderifts/receipts/<sha>.json` sidecar — that verifies OFFLINE against the pinned
-      keyring, is an ALLOW, and whose signed envelope `artifact_digest` equals the digest of this
-      pull request's contract diff. The envelope is required (a trailer carries only the token), so
-      a trailer-only receipt fails. Missing, invalid, mismatched → failure. Default false (existing
-      consumers unchanged).
+      When true, a head with no verifying CodeRifts-Receipt trailer or
+      .coderifts/receipts/<sha>.json sidecar fails before any preflight call, on every
+      profile, with reason receipt_trailer_required. A trailer that verifies offline,
+      is an ALLOW, and covers this diff still passes. The envelope is required.
+      Default false: on the enforcing profile a missing trailer falls through to issuance.
     required: false
     default: 'false'
   require-grant:
@@ -129,6 +129,21 @@ inputs:
 # Receipt (chain_receipt on the preflight response) may be a compact token or a DSSE/in-toto
 # envelope; src/from-dsse.js unwraps to the compact token and verify.js decides. DSSE presence
 # is not a pass. Grants (execution-grant) are compact cr.exec.v1 or cr.exec.v2 tokens.
+
+# JavaScript action outputs. No `value:` — that key is for composite actions.
+# src/index.js writes these to GITHUB_OUTPUT on every run, including post-check-run: false.
+outputs:
+  receipt-id:
+    description: >-
+      envelope.receipt_id when that string is non-empty, otherwise envelope.decision_id.
+      Empty when the run has no envelope. The issuer sets decision_id.
+  conclusion:
+    description: 'The conclusion this run would post: success or failure.'
+  reason:
+    description: 'Gate reason for this run (signed_allow_for_diff, receipt_trailer_required, repo_mismatch, and the other closed reasons).'
+  title:
+    description: 'Check title this run would post.'
+
 runs:
   using: 'node20'
   main: 'src/index.js'

@@ -92,7 +92,7 @@ test('⚠⚠ no receipt on the head commit → failure, and the preflight is not
   const calls = { n: 0 };
   const { res, check } = await run(makeRepo(), { calls });
   assert.equal(res.exitCode, 1);
-  assert.equal(res.gate.reason, 'receipt_trailer_missing');
+  assert.equal(res.gate.reason, 'receipt_trailer_required');
   assert.equal(check.conclusion, 'failure');
   assert.equal(calls.n, 0);
 });
