@@ -131,7 +131,8 @@ inputs:
 # is not a pass. Grants (execution-grant) are compact cr.exec.v1 or cr.exec.v2 tokens.
 
 # JavaScript action outputs. No `value:` — that key is for composite actions.
-# src/index.js writes these to GITHUB_OUTPUT on every run, including post-check-run: false.
+# src/index.js writes receipt-id, conclusion, reason, and title to GITHUB_OUTPUT on every
+# run, including post-check-run: false. control-plane-files is written when the diff has one.
 outputs:
   receipt-id:
     description: >-
@@ -143,6 +144,11 @@ outputs:
     description: 'Gate reason for this run (signed_allow_for_diff, receipt_trailer_required, repo_mismatch, and the other closed reasons).'
   title:
     description: 'Check title this run would post.'
+  control-plane-files:
+    description: >-
+      Comma-separated control-plane paths in this diff (src/control-plane.js).
+      Omitted when the diff has none. A receipt_not_allow title also carries
+      CONTROL_PLANE_CHANGE.
 
 runs:
   using: 'node20'
