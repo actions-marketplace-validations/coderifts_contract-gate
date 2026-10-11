@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.7 — 2026-10-11
+- **The opt-out log line names the reason and the receipt id.** `post-check-run: false` logs `[check not posted — post-check-run:false] <conclusion>: <title> reason=<reason> receipt-id=<id or n/a>`. A STOP (`receipt_not_allow`) and a binding mismatch share the title `Blocked — no verified receipt on the head commit`. The reason was only in `GITHUB_STEP_SUMMARY`, which the check-run API does not expose. A missing id prints `n/a`.
+- **`examples/contract-gate.yml` pins `actions/checkout` by commit.** `11d5960a326750d5838078e36cf38b85af677262` (`# v4`). On 2026-10-11 `git ls-remote` resolved `refs/tags/v4` to that commit.
+
 ## 0.11.6 — 2026-10-11
 - **The enforcing reader binds the receipt to this run.** After the digest check, `judgeReceipt` compares `preflight_mode`, `repository`, `base`, and `head` with `mismatchReason` (`src/gate.js`). A mismatch is `mode_mismatch`, `repo_mismatch`, `base_mismatch`, or `head_mismatch`, and it is a failure, not the missing-trailer fall-through. A trailer or sidecar skips a slot only when that slot is unbound. An issued receipt always compares all four, so a missing slot fails closed. On `merge_group`, `base_mismatch` or `head_mismatch` with `require-receipt-trailer` left false falls through to issuance for the queue SHAs. `repo_mismatch` and `mode_mismatch` stay failures. With the flag true, a mismatch stays a failure.
 - **`require-receipt-trailer: true` fails closed before preflight.** No verifying trailer or sidecar posts `failure` with reason `receipt_trailer_required`, on every profile, and the preflight fetch is not called. The default stays `false`: on the enforcing profile a missing trailer still falls through to issuance, and a missing key still fails `receipt_trailer_missing`.

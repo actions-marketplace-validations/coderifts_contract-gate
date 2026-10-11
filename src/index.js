@@ -235,7 +235,11 @@ async function runGate({
     // that, and says it distinctly from the token-missing skip below — an operator reading the log
     // must be able to tell "configured not to" from "could not".
     if (postCheckRun_ === false) {
-      log(`[check not posted — post-check-run:false] ${conclusion}: ${title}`);
+      // The step summary already has reason and receipt-id. The check-run API does not
+      // return it, and a STOP and a binding mismatch share this title.
+      const reason = (surface && surface.reason) || 'n/a';
+      const receiptId = (surface && surface.receiptId) || 'n/a';
+      log(`[check not posted — post-check-run:false] ${conclusion}: ${title} reason=${reason} receipt-id=${receiptId}`);
       return;
     }
     if (!githubToken || !owner || !repo || !headSha) { log(`[check skipped] ${conclusion}: ${title}`); return; }

@@ -10,7 +10,9 @@ This is [`examples/contract-gate.yml`](examples/contract-gate.yml). The aggregat
 
 The workflow's permissions are `contents: read` and `pull-requests: read`. `checks: write` is commented. Uncomment it only when `post-check-run` is left on: that is when `src/check-run.js` posts `POST /repos/{owner}/{repo}/check-runs`. The diff is read with local `git` (`src/artifacts.js` `defaultGit`, `execFileSync`). No file under `src/` calls the GitHub pulls API. `owner`, `repo`, `base`, and `head` come from `GITHUB_EVENT_PATH` (`readEvent`). `pull-requests: read` is in the block and this action does not use it.
 
-The action appends the five receipt lines, the conclusion, the receipt id, `target_id`, `expires_at`, and the reason to `GITHUB_STEP_SUMMARY`, and sets job outputs `receipt-id`, `conclusion`, `reason`, and `title`. The aggregator step prints those outputs. The required context is that job, and a step cannot set the job check-run's `output` (title, summary, text). `post-check-run: false` still writes the step summary and the outputs; it only skips the action's own check-run. The receipt id is `envelope.receipt_id` when that string is non-empty, otherwise `envelope.decision_id`. The issuer sets `decision_id`.
+The action appends the five receipt lines, the conclusion, the receipt id, `target_id`, `expires_at`, and the reason to `GITHUB_STEP_SUMMARY`, and sets job outputs `receipt-id`, `conclusion`, `reason`, and `title`. The aggregator step prints those outputs. The required context is that job, and a step cannot set the job check-run's `output` (title, summary, text). `post-check-run: false` still writes the step summary and the outputs; it only skips the action's own check-run. That opt-out logs `[check not posted — post-check-run:false] <conclusion>: <title> reason=<reason> receipt-id=<id or n/a>`. The step summary is not on the check-run API, and a STOP and a binding mismatch share the title. A missing id is `n/a`. The receipt id is `envelope.receipt_id` when that string is non-empty, otherwise `envelope.decision_id`. The issuer sets `decision_id`.
+
+`actions/checkout` in the example is pinned to commit `11d5960a326750d5838078e36cf38b85af677262` (`# v4`). On 2026-10-11 `git ls-remote` resolved `refs/tags/v4` to that commit.
 
 ```yaml
 # Copy this to `.github/workflows/contract-gate.yml` in YOUR repository.
@@ -60,7 +62,7 @@ jobs:
       reason: ${{ steps.gate.outputs.reason }}
       title: ${{ steps.gate.outputs.title }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # REQUIRED: the gate derives the change set from `git diff base...head`, so the full
           # history (both sides of the diff) must be present locally.
