@@ -45,7 +45,7 @@ jobs:
       reason: ${{ steps.gate.outputs.reason }}
       title: ${{ steps.gate.outputs.title }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # REQUIRED: the gate derives the change set from `git diff base...head`, so the full
           # history (both sides of the diff) must be present locally.

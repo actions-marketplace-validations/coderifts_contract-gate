@@ -85,7 +85,7 @@ function attach(repo, env, sha = repo.headSha) {
 
 async function run(repo, {
   owner = 'alpha', repoName = 'one', baseSha, headSha, on = false, profile = 'enforcing',
-  eventKind = null, preflightImpl, postCheckRun = true, apiKey = 'k',
+  eventKind = null, preflightImpl, postCheckRun = true, apiKey = 'k', logs = null,
 } = {}) {
   const calls = { n: 0 };
   const posted = { n: 0 };
@@ -99,7 +99,7 @@ async function run(repo, {
     keyringPath,
     preflightImpl: async () => { calls.n += 1; return network(); },
     postCheckRunImpl: async () => { posted.n += 1; return { ok: true, status: 201 }; },
-    log: () => {},
+    log: (line) => { if (logs) logs.push(line); },
     requireReceiptTrailer: on,
     profile,
     eventKind,
@@ -391,5 +391,45 @@ test('v0.11.6 receipt binding, trailer flag, and run surface', async (t) => {
       assert.match(outs, new RegExp(`\\n  ${name}:\\n`));
     }
     assert.ok(!/\n\s+value:/.test(outs), outs);
+  });
+
+  await t.test('post-check-run false log line carries reason and receipt-id', async () => {
+    const title = 'Blocked — no verified receipt on the head commit';
+    const notPosted = (lines) => lines.filter((l) => l.startsWith('[check not posted — post-check-run:false]'));
+
+    const stopRepo = makeRepo();
+    attach(stopRepo, bound(stopRepo, { execution_action: 'STOP', decision: 'BLOCK', receipt_id: 'rcpt_stop' }));
+    const stopLogs = [];
+    const stop = await run(stopRepo, { postCheckRun: false, logs: stopLogs });
+    assert.equal(stop.res.exitCode, 1);
+    assert.equal(stop.posted.n, 0);
+    assert.equal(stop.res.gate.reason, 'receipt_not_allow');
+    assert.deepEqual(notPosted(stopLogs), [
+      `[check not posted — post-check-run:false] failure: ${title} reason=receipt_not_allow receipt-id=rcpt_stop`,
+    ]);
+
+    const misRepo = makeRepo();
+    const misEnv = bound(misRepo, { receipt_id: 'rcpt_head' });
+    const token = mintV4(signer, misEnv);
+    const h2 = queueHead(misRepo);
+    writeSidecar(misRepo, h2, token, misEnv);
+    const misLogs = [];
+    const mis = await run(misRepo, { headSha: h2, postCheckRun: false, logs: misLogs });
+    assert.equal(mis.res.exitCode, 1);
+    assert.equal(mis.posted.n, 0);
+    assert.equal(mis.res.gate.reason, 'head_mismatch');
+    assert.deepEqual(notPosted(misLogs), [
+      `[check not posted — post-check-run:false] failure: ${title} reason=head_mismatch receipt-id=rcpt_head`,
+    ]);
+
+    const bareRepo = makeRepo();
+    const bareLogs = [];
+    const bare = await run(bareRepo, { postCheckRun: false, apiKey: '', logs: bareLogs });
+    assert.equal(bare.res.exitCode, 1);
+    assert.equal(bare.posted.n, 0);
+    assert.equal(bare.res.gate.reason, 'receipt_trailer_missing');
+    assert.deepEqual(notPosted(bareLogs), [
+      `[check not posted — post-check-run:false] failure: ${title} reason=receipt_trailer_missing receipt-id=n/a`,
+    ]);
   });
 });
