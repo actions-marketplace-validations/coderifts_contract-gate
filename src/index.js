@@ -45,6 +45,59 @@ function placeOf(carrier) {
   return carrier || 'n/a';
 }
 
+function receiptSurface(judgement, reason) {
+  const env = (judgement && judgement.envelope) || {};
+  const payload = (judgement && judgement.payload) || {};
+  // The issuer sets decision_id (coderifts-app src/decision-result.js). receipt_id wins when
+  // the envelope carries it. The job output is named receipt-id either way.
+  const receiptId = (typeof env.receipt_id === 'string' && env.receipt_id)
+    || (typeof env.decision_id === 'string' && env.decision_id)
+    || '';
+  return {
+    reason: reason || (judgement && judgement.reason) || '',
+    receiptId,
+    targetId: env.target_id || env.artifact_digest || '',
+    expiresAt: payload.expires_at || env.expires_at || '',
+  };
+}
+
+function writeRunSurface({ conclusion, title, summary, surface }) {
+  const s = surface || {};
+  const step = process.env.GITHUB_STEP_SUMMARY;
+  if (step) {
+    const block = [
+      summary || '',
+      '',
+      `conclusion: ${conclusion}`,
+      `receipt-id: ${s.receiptId || 'n/a'}`,
+      `target_id: ${s.targetId || 'n/a'}`,
+      `expires_at: ${s.expiresAt || 'n/a'}`,
+      `reason: ${s.reason || 'n/a'}`,
+      '',
+    ].join('\n');
+    fs.appendFileSync(step, block);
+  }
+  const out = process.env.GITHUB_OUTPUT;
+  if (out) {
+    const fields = [
+      ['receipt-id', s.receiptId || ''],
+      ['conclusion', conclusion || ''],
+      ['reason', s.reason || ''],
+      ['title', title || ''],
+    ];
+    let text = '';
+    for (const [key, value] of fields) {
+      const val = String(value);
+      if (/[\r\n]/.test(val)) {
+        text += `${key}<<CODERIFTS_EOF\n${val}\nCODERIFTS_EOF\n`;
+      } else {
+        text += `${key}=${val}\n`;
+      }
+    }
+    fs.appendFileSync(out, text);
+  }
+}
+
 function linesForReceipt(judgement, headSha, place) {
   const env = (judgement && judgement.envelope) || {};
   const payload = (judgement && judgement.payload) || {};
@@ -161,8 +214,11 @@ async function runGate({
   profile = null,
   // Set only by main(). Unit callers omit it, so a test run writes no file.
   predicatePath = null,
+  // pull_request | merge_group. A PR-head receipt's base/head do not match the queue SHAs.
+  eventKind = null,
 }) {
-  const emitCheck = async (conclusion, title, summary, text = null) => {
+  const emitCheck = async (conclusion, title, summary, text = null, surface = null) => {
+    writeRunSurface({ conclusion, title, summary, surface });
     // 1334 — DELIBERATE opt-out, distinct from "we had no token".
     //
     // MEASURED on coderifts/demo PR#4 (2026-09-03): three contract-gate check-runs on one head.
@@ -220,7 +276,7 @@ async function runGate({
         ...skip.detail.map((line) => `- ${line}`),
       ].join('\n');
       await emitCheck(OUTCOME_CONCLUSION[OUTCOME_CODE.EXPLICIT_SKIP_NOT_ALLOWED],
-        'Explicit skip is not allowed', summary);
+        'Explicit skip is not allowed', summary, null, { reason: 'explicit_skip_not_allowed' });
       return {
         exitCode: 1,
         gate: { pass: false, reason: 'explicit_skip_not_allowed' },
@@ -242,7 +298,7 @@ async function runGate({
         `- head commit: \`${headSha}\``, '',
         ...held.map((h) => h.why),
       ].join('\n');
-      await emitCheck(OUTCOME_CONCLUSION[OUTCOME_CODE.MCP_JSON_HELD], `Not checked: ${held[0].path}`, summary);
+      await emitCheck(OUTCOME_CONCLUSION[OUTCOME_CODE.MCP_JSON_HELD], `Not checked: ${held[0].path}`, summary, null, { reason: 'mcp_json_held' });
       return {
         exitCode: 1,
         gate: { pass: false, reason: 'mcp_json_held', held },
@@ -260,7 +316,7 @@ async function runGate({
         'No contract artifacts changed in this diff (openapi/graphql/grpc/asyncapi/mcp-manifest). Nothing to govern.',
       ].join('\n');
       // The conclusion comes from the namespace, not from a literal typed here twice.
-      await emitCheck(OUTCOME_CONCLUSION[OUTCOME_CODE.NO_CONTRACT_CHANGE], 'No contract changes', summary);
+      await emitCheck(OUTCOME_CONCLUSION[OUTCOME_CODE.NO_CONTRACT_CHANGE], 'No contract changes', summary, null, { reason: 'no_contract_changes' });
       return {
         exitCode: 0,
         gate: { pass: true, reason: 'no_contract_changes' },
@@ -271,8 +327,9 @@ async function runGate({
 
     // 1b. Head-commit receipt. The legacy flag fails closed before any network call.
     // The enforcing profile does the same for a receipt that is present and wrong, and it
-    // does not call preflight when the receipt verifies. A missing receipt is the only
-    // case that falls through to issuance.
+    // does not call preflight when the receipt verifies. A missing receipt falls through
+    // to issuance only when require-receipt-trailer is not true. On merge_group, a
+    // base_mismatch or head_mismatch does too: those SHAs are the queue's, not the PR's.
     const monitoringOn = enforcing || requireVerifiedMonitoring === true;
     let carried = null;
     if (enforcing || requireReceiptTrailer === true) {
@@ -285,15 +342,31 @@ async function runGate({
         requireVerifiedMonitoring: monitoringOn,
         monitoringAttestation,
         monitoringKeyring,
+        repository: `${owner}/${repo}`,
+        base: baseSha,
+        head: headSha,
       });
+      // A merge-group run's SHAs are the queue SHAs. A trailer minted for the PR head
+      // names the PR SHAs, so base_mismatch / head_mismatch is not a verdict about the
+      // queued commit: with the flag off, fall through and issue for this run.
+      const queueReissue = !t.ok && enforcing && requireReceiptTrailer !== true
+        && eventKind === 'merge_group'
+        && (t.reason === 'head_mismatch' || t.reason === 'base_mismatch');
+      const missingFallsThrough = enforcing && t.reason === 'receipt_trailer_missing' && requireReceiptTrailer !== true;
       if (t.ok && enforcing) {
         carried = t;
-      } else if (!t.ok && !(enforcing && t.reason === 'receipt_trailer_missing')) {
+      } else if (queueReissue) {
+        log(`contract-gate: ${t.reason} on merge_group; issuing a receipt for the queued commit`);
+      } else if (!t.ok && !missingFallsThrough) {
+        const reason = requireReceiptTrailer === true && t.reason === 'receipt_trailer_missing'
+          ? 'receipt_trailer_required'
+          : t.reason;
+        const judged = reason === t.reason ? t : { ...t, reason };
         const summary = enforcing
-          ? linesForReceipt(t, headSha, placeOf(t.carrier))
+          ? linesForReceipt(judged, headSha, placeOf(t.carrier))
           : [
             '❌ **CodeRifts contract-gate: FAILED**', '',
-            `- reason: \`${t.reason}\``,
+            `- reason: \`${reason}\``,
             `- head commit: \`${headSha}\``,
             ...(t.carrier ? [`- carrier: \`${t.carrier}\``] : []),
             ...(t.status ? [`- status: \`${t.status}\``] : []),
@@ -302,8 +375,8 @@ async function runGate({
             'or a `.coderifts/receipts/<sha>.json` sidecar whose receipt verifies offline, is an ALLOW,',
             'and covers exactly the contract diff of this pull request.',
           ].join('\n');
-        await emitCheck('failure', 'Blocked — no verified receipt on the head commit', summary);
-        return { exitCode: 1, gate: { pass: false, reason: t.reason, summary }, receiptTrailer: t, artifactCount: artifacts.length };
+        await emitCheck('failure', 'Blocked — no verified receipt on the head commit', summary, null, receiptSurface(judged, reason));
+        return { exitCode: 1, gate: { pass: false, reason, summary }, receiptTrailer: judged, artifactCount: artifacts.length };
       } else if (t.ok) {
         log(`contract-gate: head-commit receipt verified offline (${t.carrier})`);
       }
@@ -312,7 +385,7 @@ async function runGate({
     if (carried) {
       const summary = linesForReceipt(carried, headSha, placeOf(carried.carrier));
       writeDecisionPredicate(predicatePath, carried);
-      await emitCheck('success', 'Signed ALLOW verified for this diff', summary);
+      await emitCheck('success', 'Signed ALLOW verified for this diff', summary, null, receiptSurface(carried, 'signed_allow_for_diff'));
       log(`contract-gate: PASS (receipt_trailer_verified); files=${changedContractFiles.join(',')}`);
       return {
         exitCode: 0,
@@ -324,7 +397,7 @@ async function runGate({
 
     if (enforcing && !apiKey) {
       const summary = linesForReceipt({ ok: false, reason: 'receipt_trailer_missing' }, headSha, 'n/a');
-      await emitCheck('failure', 'Blocked — no verified receipt on the head commit', summary);
+      await emitCheck('failure', 'Blocked — no verified receipt on the head commit', summary, null, { reason: 'receipt_trailer_missing' });
       return {
         exitCode: 1,
         gate: { pass: false, reason: 'receipt_trailer_missing', summary },
@@ -367,10 +440,13 @@ async function runGate({
         requireVerifiedMonitoring: true,
         monitoringAttestation,
         monitoringKeyring,
+        repository: context.repository,
+        base: context.base,
+        head: context.head,
       });
       const summary = linesForReceipt(issued, headSha, ISSUED_PLACE);
       if (!issued.ok) {
-        await emitCheck('failure', 'Blocked — issued receipt did not verify', summary);
+        await emitCheck('failure', 'Blocked — issued receipt did not verify', summary, null, receiptSurface(issued, issued.reason));
         return {
           exitCode: 1,
           gate: { pass: false, reason: issued.reason, summary, preflight: true },
@@ -378,7 +454,7 @@ async function runGate({
         };
       }
       writeDecisionPredicate(predicatePath, issued);
-      await emitCheck('success', 'Signed ALLOW verified for this diff', summary);
+      await emitCheck('success', 'Signed ALLOW verified for this diff', summary, null, receiptSurface(issued, 'signed_allow_for_diff'));
       log(`contract-gate: PASS (issued receipt verified offline); files=${changedContractFiles.join(',')}`);
       return {
         exitCode: 0,
@@ -441,7 +517,7 @@ async function runGate({
       } catch (err) {
         const reason = 'bundle_unreadable';
         const summary = `proof bundle at ${bundlePath} could not be read or parsed: ${String((err && err.message) || 'unknown').slice(0, 160)}`;
-        await emitCheck('failure', 'CodeRifts contract gate: failed', summary);
+        await emitCheck('failure', 'CodeRifts contract gate: failed', summary, null, { reason });
         return { exitCode: 1, gate: { pass: false, reason, summary }, artifactCount: 0 };
       }
       if (bundleSlotKeysPath) {
@@ -450,7 +526,7 @@ async function runGate({
         } catch (err) {
           const reason = 'bundle_slot_keys_unreadable';
           const summary = `bundle slot keys at ${bundleSlotKeysPath} could not be read or parsed: ${String((err && err.message) || 'unknown').slice(0, 160)}`;
-          await emitCheck('failure', 'CodeRifts contract gate: failed', summary);
+          await emitCheck('failure', 'CodeRifts contract gate: failed', summary, null, { reason });
           return { exitCode: 1, gate: { pass: false, reason, summary }, artifactCount: 0 };
         }
       }
@@ -476,12 +552,12 @@ async function runGate({
     // mutually exclusive by construction — a policy refusal maps to no remedy class — but they
     // are composed rather than assumed apart.
     const detail = [remedyBlock(gate.remedy), nextStepBlock(gate.nextStep)].filter(Boolean).join('\n\n');
-    await emitCheck(gate.conclusion, title, gate.summary, detail || null);
+    await emitCheck(gate.conclusion, title, gate.summary, detail || null, { reason: gate.reason });
     log(`contract-gate: ${gate.pass ? 'PASS' : 'FAIL'} (${gate.reason}); files=${changedContractFiles.join(',')}`);
     return { exitCode: gate.pass ? 0 : 1, gate, artifactCount: artifacts.length };
   } catch (err) {
     const summary = buildSummary({ pass: false, reason: `error:${err && err.message ? err.message : 'unknown'}`, headSha });
-    await emitCheck('failure', 'contract-gate error (fail-closed)', summary);
+    await emitCheck('failure', 'contract-gate error (fail-closed)', summary, null, { reason: 'error' });
     log(`contract-gate error (fail-closed): ${err && err.stack ? err.stack : err}`);
     return { exitCode: 1, gate: { pass: false, reason: 'error' }, artifactCount: 0 };
   }
@@ -507,6 +583,7 @@ async function main() {
     // remove the gate's own check-run.
     postCheckRun: String(process.env['INPUT_POST-CHECK-RUN'] || '').toLowerCase() !== 'false',
     owner: ev.owner, repo: ev.repo, baseSha: ev.baseSha, headSha: ev.headSha,
+    eventKind: ev.eventKind,
     prTitle: ev.prTitle,
     env: process.env,
     cwd: process.env.GITHUB_WORKSPACE || process.cwd(),

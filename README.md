@@ -8,6 +8,10 @@ The Action posts a check. Branch protection is what blocks the merge ([ENFORCEME
 
 This is [`examples/contract-gate.yml`](examples/contract-gate.yml). The aggregator job is named `CodeRifts / contract-gate` and runs `if: always()`. The Action sets `post-check-run: 'false'`.
 
+The workflow's permissions are `contents: read` and `pull-requests: read`. `checks: write` is commented. Uncomment it only when `post-check-run` is left on: that is when `src/check-run.js` posts `POST /repos/{owner}/{repo}/check-runs`. The diff is read with local `git` (`src/artifacts.js` `defaultGit`, `execFileSync`). No file under `src/` calls the GitHub pulls API. `owner`, `repo`, `base`, and `head` come from `GITHUB_EVENT_PATH` (`readEvent`). `pull-requests: read` is in the block and this action does not use it.
+
+The action appends the five receipt lines, the conclusion, the receipt id, `target_id`, `expires_at`, and the reason to `GITHUB_STEP_SUMMARY`, and sets job outputs `receipt-id`, `conclusion`, `reason`, and `title`. The aggregator step prints those outputs. The required context is that job, and a step cannot set the job check-run's `output` (title, summary, text). `post-check-run: false` still writes the step summary and the outputs; it only skips the action's own check-run. The receipt id is `envelope.receipt_id` when that string is non-empty, otherwise `envelope.decision_id`. The issuer sets `decision_id`.
+
 ```yaml
 # Copy this to `.github/workflows/contract-gate.yml` in YOUR repository.
 #
@@ -22,24 +26,39 @@ This is [`examples/contract-gate.yml`](examples/contract-gate.yml). The aggregat
 # `CodeRifts / contract-gate` bound to 15368 — this workflow's job below.
 name: CodeRifts Contract Gate
 
-# Run on EVERY pull request to the protected branch. Do NOT add `paths:` filters — a path filter
+# Run on EVERY pull request to the protected branch. Do NOT add a path filter — a filter
 # would skip contract PRs the filter doesn't match, and a required check that never runs leaves the
 # PR mergeable with the check "pending" (see ENFORCEMENT.md, "fail-closed on absence").
 # merge_group is a different commit from the PR head. A required check that only listens to
 # pull_request is never reported on the queue, and GitHub then refuses the merge.
+# The run's SHAs on that event are merge_group.base_sha and merge_group.head_sha. A trailer
+# minted for the pull-request head names the pull-request SHAs, so base_mismatch or
+# head_mismatch falls through to issuance when require-receipt-trailer is left false.
+# With that input true, the mismatch stays a failure. repo_mismatch and mode_mismatch
+# stay failures either way.
 on:
   pull_request:
   merge_group:
 
-# Least privilege: write checks (to post the Check Run) + read the code (to derive the diff).
+# Suggested setup (post-check-run: 'false' below) does not post a check-run.
+# contents: read — actions/checkout and the local git reads (src/artifacts.js defaultGit).
+# pull-requests: read — the action does not call the pulls API. SHAs come from GITHUB_EVENT_PATH.
+# Uncomment checks: write only when this action posts its own check
+# (src/check-run.js POST /repos/{owner}/{repo}/check-runs).
 permissions:
-  checks: write
   contents: read
+  pull-requests: read
+  # checks: write
 
 jobs:
   contract-gate-action:
     name: contract-gate (Action)
     runs-on: ubuntu-latest
+    outputs:
+      receipt-id: ${{ steps.gate.outputs.receipt-id }}
+      conclusion: ${{ steps.gate.outputs.conclusion }}
+      reason: ${{ steps.gate.outputs.reason }}
+      title: ${{ steps.gate.outputs.title }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,7 +66,8 @@ jobs:
           # history (both sides of the diff) must be present locally.
           fetch-depth: 0
 
-      - uses: coderifts/contract-gate@v0
+      - id: gate
+        uses: coderifts/contract-gate@v0
         with:
           api-key: ${{ secrets.CODERIFTS_API_KEY }}
           # The job below carries the required name. If the action posted its own check under the
@@ -73,9 +93,18 @@ jobs:
       - name: the gate ran and succeeded — skipped is not success
         env:
           GATE_RESULT: ${{ needs.contract-gate-action.result }}
+          RECEIPT_ID: ${{ needs.contract-gate-action.outputs.receipt-id }}
+          CONCLUSION: ${{ needs.contract-gate-action.outputs.conclusion }}
+          REASON: ${{ needs.contract-gate-action.outputs.reason }}
+          TITLE: ${{ needs.contract-gate-action.outputs.title }}
         run: |
           echo "contract-gate-action result: $GATE_RESULT"
+          echo "receipt-id: $RECEIPT_ID"
+          echo "conclusion: $CONCLUSION"
+          echo "reason: $REASON"
+          echo "title: $TITLE"
           # success | failure | cancelled | skipped — only the first is a pass.
+          # A job check-run's output cannot be set from this step. These lines are the log.
           [ "$GATE_RESULT" = "success" ] || exit 1
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -98,15 +127,17 @@ Branch protection, on the protected branch: require status checks, and add both 
 
 The default is `profile: enforcing`.
 
-- A head commit that carries a `CodeRifts-Receipt` trailer and a `.coderifts/receipts/<sha>.json` sidecar is verified offline against the pinned keyring. That run does not call preflight.
-- With no trailer and no sidecar, the gate issues a receipt, verifies that receipt offline, and writes it to the check summary. The receipt is never written onto the commit.
+- A head commit that carries a `CodeRifts-Receipt` trailer and a `.coderifts/receipts/<sha>.json` sidecar is verified offline against the pinned keyring. That run does not call preflight. On this profile the envelope must also match this run: `preflight_mode` `authorize`, `repository` `<owner>/<repo>`, `base` the run's base SHA, `head` the run's head SHA. The comparison is `mismatchReason` (`src/gate.js`). A missing or different slot is `mode_mismatch`, `repo_mismatch`, `base_mismatch`, or `head_mismatch`. A trailer or sidecar skips a slot only when that slot is unbound. An issued receipt does not.
+- With no trailer and no sidecar, and with `require-receipt-trailer` left false, the gate issues a receipt, verifies that receipt offline, and writes it to the step summary. The receipt is never written onto the commit. The issued envelope is held to the same four slots, and a missing slot fails closed.
+- On `merge_group` the run's SHAs are `merge_group.base_sha` and `merge_group.head_sha` (`readEvent` in `src/index.js`). A trailer minted for the pull-request head names the pull-request SHAs. `base_mismatch` or `head_mismatch` on that event, with `require-receipt-trailer` left false, is not a verdict about the queued commit: the run logs the reason and issues a receipt for the merge-group SHAs. `repo_mismatch` and `mode_mismatch` stay failures. With `require-receipt-trailer: true`, a mismatch stays a failure.
 
 > **CWM honesty.** With `require_verified_monitoring: true` the gate verifies a `cr.monitor.attest.v1` token offline against a pinned monitoring keyring (CWM passes only on `delivered_acked`); by default it passes CWM on the host's claim. The token proves a monitoring-key holder observed the delivery — not that a human read it, not that the sink targets the right audience. Unsigned JSON is not accepted under the flag.
 
 ## Requiring the receipt on the head commit (`require-receipt-trailer`)
 
-Off by default. With `require-receipt-trailer: 'true'` the gate additionally requires the receipt
-that was **attached to the head commit**, and checks it offline before any API call:
+Default `false`. On the enforcing profile a missing trailer then falls through to issuance when `api-key` is set. With no key, that run fails `receipt_trailer_missing` and does not call preflight.
+
+With `require-receipt-trailer: 'true'`, no verifying trailer or sidecar fails before any preflight call, on every profile, with reason `receipt_trailer_required`. A trailer that is present is still checked offline:
 
 - **Carrier.** A `CodeRifts-Receipt: <token>` trailer in the head commit message, and/or a
   `.coderifts/receipts/<head-sha>.json` sidecar `{ "receipt": "<token>", "envelope": { … } }` in the
@@ -115,16 +146,14 @@ that was **attached to the head commit**, and checks it offline before any API c
 - **This diff.** The signed envelope's `artifact_digest` must equal the digest the gate computes from
   the pull request's actual contract diff (sha256 over each artifact's before/after bytes, sorted by
   type and id — the recipe the CodeRifts API signs).
-- **An ALLOW.** The envelope's `execution_action` must be `CONTINUE`.
+- **An ALLOW.** The envelope's `execution_action` must be `CONTINUE`. On the enforcing profile it must also be `operation: merge`, and the four run slots above must match.
 
 The envelope is required: a trailer carries only the token, which proves the receipt is authentic
 but not which diff it covers, so **a trailer on its own fails** (`receipt_envelope_required`). A
 sidecar keyed by the head SHA cannot live inside the head commit (the SHA would change) — write it
 into the workspace in a step before the gate.
 
-Missing, conflicting, unauthentic, a different diff, or not an ALLOW → the check fails, with the
-reason (`receipt_trailer_missing`, `receipt_trailer_conflict`, `receipt_trailer_invalid`,
-`receipt_diff_mismatch`, `receipt_not_allow`, `receipt_envelope_required`) in the summary.
+Conflicting, unauthentic, a different diff, not an ALLOW, or a run-slot mismatch → the check fails, with the reason (`receipt_trailer_conflict`, `receipt_trailer_invalid`, `receipt_diff_mismatch`, `receipt_not_allow`, `receipt_envelope_required`, `mode_mismatch`, `repo_mismatch`, `base_mismatch`, `head_mismatch`) in the summary. A missing carrier when the flag is true is `receipt_trailer_required`. When the flag is false and the profile is enforcing, a missing carrier is not that reason: it falls through, or it is `receipt_trailer_missing` when there is no key.
 
 ```yaml
       - uses: coderifts/contract-gate@v0
@@ -163,7 +192,7 @@ drifts from its pin, and separately re-checks the key-status behaviour the pin e
 
 ## single-check (legacy)
 
-One job. The Action posts `CodeRifts / contract-gate` itself, because `post-check-run` is left at its default `true`. That is not the suggested setup. The suggested setup is the aggregator job above, with `post-check-run: 'false'`, and branch protection requiring both contexts.
+One job. The Action posts `CodeRifts / contract-gate` itself, because `post-check-run` is left at its default `true`. That is not the suggested setup. The suggested setup is the aggregator job above, with `post-check-run: 'false'`, and branch protection requiring both contexts. This job posts the check, so it keeps `checks: write`. The suggested setup does not.
 
 ```yaml
 on: pull_request
@@ -185,6 +214,14 @@ jobs:
           # monitoring-attestation: ${{ vars.CODERIFTS_MONITORING_ATTESTATION }}
           # monitoring-keyring: ${{ github.workspace }}/.coderifts/monitoring-keys.json
 ```
+
+## Where it stops
+
+A fork pull request does not receive `CODERIFTS_API_KEY`. GitHub does not pass secrets to a workflow triggered from a fork. This action then has no key, issues nothing, and fails closed with `receipt_trailer_missing`, unless the head already carries a verifying trailer or sidecar. That offline path does not call the issuer.
+
+The required context `CodeRifts / contract-gate` is posted by the workflow's `GITHUB_TOKEN`, so it carries the Actions identity (`src/gate.js`). Anyone who can edit `.github/workflows/` can change what that job runs and still post a green check under that name. That is why `CodeRifts / issuer`, posted by the App, is the second required check, and why it is bound to the App integration. Put CODEOWNERS on `.github/workflows/**`. Where the organisation has one, require the workflow at organisation level as well.
+
+`pull_request_target` is not a trigger in `examples/contract-gate.yml`, and it is not recommended. A `pull_request_target` run has the base repository's secrets and checks out the fork's code (pwn-request).
 
 ## Releasing
 

@@ -50,5 +50,5 @@ CodeRifts Contract Gate
 | Check Run name | `CodeRifts / contract-gate` | `src/check-run.js` (pinned by `test/enforcement-docs.test.js`) |
 | Branding | `icon: lock`, `color: blue` | `action.yml` |
 | License | MIT | `LICENSE` |
-| Required permissions | `checks: write`, `contents: read` | `README.md` usage block |
+| Required permissions | Suggested workflow: `contents: read`, `pull-requests: read`. `checks: write` only when the action posts its own check. | `README.md` usage block |
 | Required setup | `actions/checkout` with `fetch-depth: 0` | `action.yml` comment |
