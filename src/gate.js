@@ -150,6 +150,11 @@ function evaluateGate({
   } catch (err) {
     return fail('verify_threw', { receiptStatus: `error:${err && err.message ? err.message : 'unknown'}` });
   }
+  // P66 (2026-10-12): only a v4 receipt bound to this envelope, with a readable expiry (receipt-version.js).
+  const versionFault = require('./receipt-version').v4BoundFault(result, envelope);
+  if (versionFault) {
+    return fail(versionFault.reason, { receiptStatus: versionFault.status, receiptVersion: versionFault.version });
+  }
 
   const executionAction = typeof envelope.execution_action === 'string' ? envelope.execution_action : null;
   const decision = typeof envelope.decision === 'string' ? envelope.decision : null;

@@ -106,6 +106,17 @@ function judgeReceipt({
     };
   }
   const res = verifyReceipt(token, { ctx: { keyring, expectedKid: null }, envelope, now });
+  // P66 (2026-10-12): only a v4 receipt bound to its envelope, with a readable expiry, on every carrier
+  // and every profile — a v<4 token is named as such, never folded into a generic invalid.
+  const versionFault = require('./receipt-version').v4BoundFault(res, envelope);
+  if (versionFault) {
+    return {
+      ok: false, reason: versionFault.reason, carrier, status: versionFault.status, token, envelope, payload: res && res.payload,
+      detail: versionFault.reason === 'receipt_version_unsupported'
+        ? `receipt version v${versionFault.version} is not accepted; only a v4 receipt bound to its envelope`
+        : `the v4 receipt is not usable: ${versionFault.reason}`,
+    };
+  }
   if (!res || res.valid !== true) {
     const status = res && res.status;
     if (enforcing && (status === 'INVALID_SIGNATURE' || status === 'VERIFIED_EXPIRED')) {
