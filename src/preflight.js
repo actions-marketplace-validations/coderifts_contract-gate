@@ -23,6 +23,24 @@ function buildPreflightRequest({ artifacts, context = {}, preflight_mode = 'auth
 }
 
 /**
+ * The authorize request the server will bind. A missing slot is named and must not be sent:
+ * without preflight_mode authorize, repository, base, and head, the server ignores control_plane
+ * artifacts. operation must be merge.
+ * @returns {null|'preflight_mode'|'repository'|'base'|'head'|'operation'}
+ */
+function missingAuthorizeSlot({ artifacts, context, preflight_mode } = {}) {
+  void artifacts;
+  const nonEmpty = (v) => typeof v === 'string' && v.trim().length > 0;
+  if (preflight_mode !== 'authorize') return 'preflight_mode';
+  const ctx = context || {};
+  if (!nonEmpty(ctx.repository) || !/^[^/\s]+\/[^/\s]+$/.test(ctx.repository)) return 'repository';
+  if (!nonEmpty(ctx.base)) return 'base';
+  if (!nonEmpty(ctx.head)) return 'head';
+  if (ctx.operation !== 'merge') return 'operation';
+  return null;
+}
+
+/**
  * @param {object} o
  * @param {string} o.apiKey
  * @param {string} o.apiUrl               base URL, e.g. https://app.coderifts.com
@@ -68,4 +86,4 @@ async function callPreflight({
   }
 }
 
-module.exports = { callPreflight, buildPreflightRequest, DEFAULT_TIMEOUT_MS };
+module.exports = { callPreflight, buildPreflightRequest, missingAuthorizeSlot, DEFAULT_TIMEOUT_MS };

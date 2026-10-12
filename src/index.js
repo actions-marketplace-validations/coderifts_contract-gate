@@ -22,7 +22,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { deriveArtifactsFromDiff, defaultGit } = require('./artifacts');
 const { buildGateCompletenessClaim } = require('./completeness-claim');
-const { callPreflight } = require('./preflight');
+const { callPreflight, missingAuthorizeSlot } = require('./preflight');
 const { evaluateGate, buildSummary, remedyBlock, nextStepBlock, buildReceiptCheckLines } = require('./gate');
 const { postCheckRun, CHECK_NAME } = require('./check-run');
 const { loadKeyring } = require('./verify');
@@ -33,7 +33,7 @@ const { selectGrantForHead } = require('./grant-delivery');
 const { OUTCOME_CODE, OUTCOME_CONCLUSION } = require('./outcome-code');
 const { detectExplicitSkip, commitMessagesInRange } = require('./explicit-skip');
 const { checkReceiptTrailer, judgeReceipt } = require('./receipt-trailer');
-const { summarizeControlPlane } = require('./control-plane');
+const { deriveControlPlaneArtifacts } = require('./control-plane');
 const { receiptDigest } = require('./monitoring-attestation');
 const { writeDecisionPredicate } = require('./decision-predicate');
 
@@ -312,11 +312,16 @@ async function runGate({
     }
 
     // 1. artifacts from the REAL diff — the anti-bypass invariant.
-    // allChanged is `git diff base...head --name-only` before classify() drops
-    // non-contract paths (src/artifacts.js). Control-plane paths are taken from
-    // that list, so a workflow-only diff is not no_contract_changes.
-    const { artifacts, changedContractFiles, allChanged, held } = deriveArtifactsFromDiff({ baseRef: baseSha, headRef: headSha, cwd, gitImpl });
-    controlPlaneMatched = summarizeControlPlane(allChanged).matched;
+    // Contract files stay on `git diff base...head --name-only` (src/artifacts.js).
+    // Control-plane paths are `git diff -z --no-renames --name-only base head`, so a
+    // rename is a delete of the old path plus an add of the new one. A workflow-only
+    // diff is not no_contract_changes, and the authorize body carries those files.
+    const derived = deriveArtifactsFromDiff({ baseRef: baseSha, headRef: headSha, cwd, gitImpl });
+    const { changedContractFiles, held } = derived;
+    const controlPlane = deriveControlPlaneArtifacts({ baseRef: baseSha, headRef: headSha, cwd, gitImpl });
+    controlPlaneMatched = controlPlane.matched;
+    const contractArtifacts = derived.artifacts;
+    const artifacts = contractArtifacts.concat(controlPlane.artifacts);
 
     // P65d: a held plain mcp.json decides the run red before anything is sent (and it is never "no change").
     if (held && held.length) {
@@ -336,7 +341,7 @@ async function runGate({
       };
     }
 
-    if (artifacts.length === 0 && controlPlaneMatched.length === 0) {
+    if (contractArtifacts.length === 0 && controlPlaneMatched.length === 0) {
       const summary = [
         '✅ **CodeRifts contract-gate: PASS**', '',
         '- reason: `no_contract_changes`',
@@ -448,8 +453,26 @@ async function runGate({
       completeness: buildGateCompletenessClaim(artifacts),
       require_completeness: 'attested',
     };
+    const preflight_mode = 'authorize';
+    const missingSlot = missingAuthorizeSlot({ artifacts, context, preflight_mode });
+    if (missingSlot) {
+      const summary = [
+        '❌ **CodeRifts contract-gate: FAILED**', '',
+        '- reason: `invalid_context`',
+        `- slot: \`${missingSlot}\``,
+        `- head commit: \`${headSha}\``, '',
+        'The authorize request was not sent. preflight_mode, repository, base, head, and operation',
+        'are required. Without them the server ignores control_plane artifacts.',
+      ].join('\n');
+      await emitCheck('failure', 'Blocked — invalid context', summary, null, { reason: 'invalid_context' });
+      return {
+        exitCode: 1,
+        gate: { pass: false, reason: 'invalid_context', slot: missingSlot, summary },
+        artifactCount: artifacts.length,
+      };
+    }
     const preflightResponse = await preflightImpl({
-      apiKey, apiUrl, artifacts, context, preflight_mode: 'authorize', fetchImpl,
+      apiKey, apiUrl, artifacts, context, preflight_mode, fetchImpl,
     });
 
     // Enforcing, and the head commit had no receipt. The response is only a carrier:
