@@ -15,7 +15,8 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const { runGate } = require('../src/index');
-const { deriveArtifactsFromDiff } = require('../src/artifacts');
+const { deriveArtifactsFromDiff, defaultGit } = require('../src/artifacts');
+const { deriveControlPlaneArtifacts } = require('../src/control-plane');
 const { artifactDigestOf } = require('../src/receipt-trailer');
 const { newSigner, mintV4, writeKeyringFile, envelope } = require('./mint');
 
@@ -59,9 +60,17 @@ function workflowOnly() {
   );
 }
 
-function issued(repo, { execution_action, decision, receipt_id }) {
+function sentArtifacts(repo) {
   const derived = deriveArtifactsFromDiff({ baseRef: repo.baseSha, headRef: repo.headSha, cwd: repo.dir });
-  const d = artifactDigestOf(derived.artifacts);
+  const cp = deriveControlPlaneArtifacts({
+    baseRef: repo.baseSha, headRef: repo.headSha, cwd: repo.dir, gitImpl: defaultGit,
+  });
+  return derived.artifacts.concat(cp.artifacts);
+}
+
+function issued(repo, { execution_action, decision, receipt_id }) {
+  const arts = sentArtifacts(repo);
+  const d = artifactDigestOf(arts);
   const env = envelope({
     execution_action,
     decision,
@@ -76,7 +85,7 @@ function issued(repo, { execution_action, decision, receipt_id }) {
       receipt_id,
     },
   });
-  return { chain_receipt: mintV4(signer, env), decision_result: env, artifacts: derived.artifacts };
+  return { chain_receipt: mintV4(signer, env), decision_result: env, artifacts: arts };
 }
 
 async function run(repo, { apiKey = 'k', on = false, profile = 'enforcing', preflightImpl, postCheckRun = false, logs = null } = {}) {
@@ -145,7 +154,14 @@ test('v0.11.8 control-plane receipt path', async (t) => {
     }));
     const { res, calls } = value;
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].artifacts, []);
+    assert.equal(calls[0].artifacts.length, 1);
+    assert.equal(calls[0].artifacts[0].type, 'control_plane');
+    assert.equal(calls[0].artifacts[0].id, WF);
+    assert.equal(calls[0].preflight_mode, 'authorize');
+    assert.equal(calls[0].context.operation, 'merge');
+    assert.equal(calls[0].context.repository, 'alpha/one');
+    assert.equal(calls[0].context.base, repo.baseSha);
+    assert.equal(calls[0].context.head, repo.headSha);
     assert.equal(res.exitCode, 1);
     assert.equal(res.gate.reason, 'receipt_not_allow');
     assert.match(summary, /receipt_not_allow/);
@@ -204,8 +220,8 @@ test('v0.11.8 control-plane receipt path', async (t) => {
       decision: 'ALLOW',
       receipt_id: 'rcpt_mix',
     });
-    assert.equal(body.artifacts.length, 1);
-    assert.equal(body.artifacts[0].id, 'api/openapi.yaml');
+    assert.equal(body.artifacts.length, 2);
+    assert.deepEqual(body.artifacts.map((a) => a.type).sort(), ['control_plane', 'openapi']);
     const logs = [];
     const { value, summary, output } = await withSurface(() => run(repo, {
       preflightImpl: async () => ({ chain_receipt: body.chain_receipt, decision_result: body.decision_result }),
@@ -213,8 +229,8 @@ test('v0.11.8 control-plane receipt path', async (t) => {
     }));
     const { res, calls } = value;
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].artifacts.length, 1);
-    assert.equal(calls[0].artifacts[0].id, 'api/openapi.yaml');
+    assert.equal(calls[0].artifacts.length, 2);
+    assert.deepEqual(calls[0].artifacts.map((a) => a.type).sort(), ['control_plane', 'openapi']);
     assert.equal(res.exitCode, 0);
     assert.equal(res.gate.reason, 'signed_allow_for_diff');
     assert.equal(res.gate.preflight, true);
@@ -253,6 +269,14 @@ test('control-plane list matches coderifts-app src/mergegate/control-plane.js', 
   yes('.coderifts/audit.yml', 'audit_config');
   yes('.coderifts/audit.yaml', 'audit_config');
   yes('coderifts-audit.yml', 'audit_config');
+  yes('coderifts-audit.yaml', 'audit_config');
+  yes('keyring/pinned-keys.json', 'trust_anchor');
+  yes('action.yml', 'ci_workflow');
+  yes('action.yaml', 'ci_workflow');
+  yes('.github/actions/local/action.yml', 'ci_workflow');
+  no('src/action.yml');
+  no('CODEOWNERS');
+  no('.github/CODEOWNERS');
   no('README.md');
   no('api/openapi.yaml');
 });
